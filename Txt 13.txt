@@ -1,0 +1,921 @@
+```java
+// DOSYA 161: app/src/main/java/com/jai/app/util/PermissionHelper.java
+package com.jai.app.util;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+public class PermissionHelper {
+    public static final int REQ_RECORD_AUDIO = 101;
+    public static final int REQ_NOTIFICATIONS = 102;
+
+    public static boolean hasAudioPermission(Activity activity) {
+        return ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    public static void requestAudioPermission(Activity activity) {
+        ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_AUDIO);
+    }
+}
+```
+
+```java
+// DOSYA 162: app/src/main/java/com/jai/app/util/FileUtils.java
+package com.jai.app.util;
+
+import android.content.Context;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+
+public class FileUtils {
+    public static File copyToFilesDir(Context ctx, InputStream is, String filename) throws Exception {
+        File outFile = new File(ctx.getFilesDir(), filename);
+        try (FileOutputStream fos = new FileOutputStream(outFile)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                fos.write(buffer, 0, read);
+            }
+        }
+        return outFile;
+    }
+    
+    public static long getDirSize(File dir) {
+        long size = 0;
+        if (dir != null && dir.isDirectory()) {
+            for (File f : dir.listFiles()) {
+                if (f.isFile()) size += f.length();
+                else size += getDirSize(f);
+            }
+        }
+        return size;
+    }
+}
+```
+
+```java
+// DOSYA 163: app/src/main/java/com/jai/app/ui/ImageAdapter.java
+package com.jai.app.ui;
+
+import android.graphics.BitmapFactory;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ImageView;
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import java.io.File;
+import java.util.List;
+
+public class ImageAdapter extends RecyclerView.Adapter<ImageAdapter.VH> {
+    private final List<File> images;
+
+    public ImageAdapter(List<File> images) {
+        this.images = images;
+    }
+
+    @NonNull @Override
+    public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_image, parent, false);
+        return new VH(v);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull VH holder, int position) {
+        File imgFile = images.get(position);
+        if (imgFile.exists()) {
+            holder.img.setImageBitmap(BitmapFactory.decodeFile(imgFile.getAbsolutePath()));
+        }
+    }
+
+    @Override
+    public int getItemCount() {
+        return images.size();
+    }
+
+    static class VH extends RecyclerView.ViewHolder {
+        ImageView img;
+        VH(@NonNull View itemView) {
+            super(itemView);
+            img = itemView.findViewById(R.id.imgThumb);
+        }
+    }
+}
+```
+
+```java
+// DOSYA 164: app/src/main/java/com/jai/app/ui/VideoAdapter.java
+package com.jai.app.ui;
+
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.VideoJobEntity;
+import java.util.List;
+
+public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VH> {
+    private final List<VideoJobEntity> jobs;
+    private final OnVideoClick listener;
+
+    public interface OnVideoClick { void onClick(VideoJobEntity job); }
+
+    public VideoAdapter(List<VideoJobEntity> jobs, OnVideoClick listener) {
+        this.jobs = jobs;
+        this.listener = listener;
+    }
+
+    @NonNull @Override
+    public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_video, parent, false);
+        return new VH(v);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull VH holder, int position) {
+        VideoJobEntity j = jobs.get(position);
+        holder.name.setText(j.prompt.length() > 30 ? j.prompt.substring(0, 30) + "..." : j.prompt);
+        holder.meta.setText(j.status + " | " + j.framesDone + "/" + j.framesTotal + " kare");
+        holder.itemView.setOnClickListener(v -> listener.onClick(j));
+    }
+
+    @Override
+    public int getItemCount() { return jobs.size(); }
+
+    static class VH extends RecyclerView.ViewHolder {
+        TextView name, meta;
+        VH(@NonNull View v) {
+            super(v);
+            name = v.findViewById(R.id.txtName);
+            meta = v.findViewById(R.id.txtMeta);
+        }
+    }
+}
+```
+
+```java
+// DOSYA 165: app/src/main/java/com/jai/app/ui/LearningAdapter.java
+package com.jai.app.ui;
+
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.LearningTaskEntity;
+import java.util.List;
+
+public class LearningAdapter extends RecyclerView.Adapter<LearningAdapter.VH> {
+    private final List<LearningTaskEntity> tasks;
+
+    public LearningAdapter(List<LearningTaskEntity> tasks) { this.tasks = tasks; }
+
+    @NonNull @Override
+    public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_learning, parent, false);
+        return new VH(v);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull VH holder, int position) {
+        LearningTaskEntity t = tasks.get(position);
+        holder.topic.setText(t.topic);
+        holder.status.setText(t.status);
+    }
+
+    @Override
+    public int getItemCount() { return tasks.size(); }
+
+    static class VH extends RecyclerView.ViewHolder {
+        TextView topic, status;
+        VH(@NonNull View v) {
+            super(v);
+            topic = v.findViewById(R.id.txtTopic);
+            status = v.findViewById(R.id.txtStatus);
+        }
+    }
+}
+```
+
+```java
+// DOSYA 166: app/src/main/java/com/jai/app/ui/ImageGalleryActivity.java
+package com.jai.app.ui;
+
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ImageGalleryActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.activity_learning); // Reuse layout
+        RecyclerView rv = findViewById(R.id.listTasks);
+        rv.setLayoutManager(new GridLayoutManager(this, 2));
+
+        File dir = new File(getFilesDir(), "outputs");
+        List<File> images = new ArrayList<>();
+        if (dir.exists() && dir.listFiles() != null) {
+            for (File f : dir.listFiles()) {
+                if (f.getName().endsWith(".png") || f.getName().endsWith(".jpg")) {
+                    images.add(f);
+                }
+            }
+        }
+        rv.setAdapter(new ImageAdapter(images));
+    }
+}
+```
+
+```java
+// DOSYA 167: app/src/main/java/com/jai/app/ui/VideoGalleryActivity.java
+package com.jai.app.ui;
+
+import android.content.Intent;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.AppDatabase;
+
+public class VideoGalleryActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.activity_learning); // Reuse layout
+        RecyclerView rv = findViewById(R.id.listTasks);
+        rv.setLayoutManager(new LinearLayoutManager(this));
+        
+        rv.setAdapter(new VideoAdapter(AppDatabase.get(this).videoJobs().all(), job -> {
+            if (job.outputPath != null) {
+                Intent i = new Intent(this, VideoPlayerActivity.class);
+                i.putExtra("path", job.outputPath);
+                startActivity(i);
+            }
+        }));
+    }
+}
+```
+
+```java
+// DOSYA 168: app/src/main/java/com/jai/app/ui/LearningActivity.java
+package com.jai.app.ui;
+
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.AppDatabase;
+
+public class LearningActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.activity_learning);
+        RecyclerView rv = findViewById(R.id.listTasks);
+        rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(new LearningAdapter(AppDatabase.get(this).learningTasks().all()));
+    }
+}
+```
+
+```java
+// DOSYA 169: app/src/main/java/com/jai/app/ui/VideoActivity.java
+package com.jai.app.ui;
+
+import android.os.Bundle;
+import android.widget.ArrayAdapter;
+import android.widget.EditText;
+import android.widget.Spinner;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+import com.jai.app.R;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.VideoJobEntity;
+import com.jai.app.work.VideoWorker;
+
+public class VideoActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_video);
+        EditText p = findViewById(R.id.inputPrompt);
+        Spinner dur = findViewById(R.id.spinnerDuration), qual = findViewById(R.id.spinnerQuality);
+        TextView est = findViewById(R.id.txtEstimate);
+
+        dur.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"5 saniye", "30 saniye", "1 dakika", "5 dakika", "10 dakika"}));
+        qual.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"512p (Hızlı)", "1024p (Yüksek)"}));
+
+        findViewById(R.id.btnStartVideo).setOnClickListener(v -> {
+            int d = new int[]{5, 30, 60, 300, 600}[dur.getSelectedItemPosition()];
+            int q = qual.getSelectedItemPosition() == 1 ? 1024 : 512;
+            String prompt = p.getText().toString().trim();
+            if(prompt.isEmpty()) { p.setError("Açıklama girin"); return; }
+            
+            VideoJobEntity j = new VideoJobEntity(prompt, d, q);
+            AppDatabase.get(this).videoJobs().insert(j);
+            WorkManager.getInstance(this).enqueue(new OneTimeWorkRequest.Builder(VideoWorker.class).build());
+            finish();
+        });
+        
+        dur.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view, int position, long id) {
+                int d = new int[]{5, 30, 60, 300, 600}[position];
+                int q = qual.getSelectedItemPosition() == 1 ? 1024 : 512;
+                float secs = d * 24 * (q == 1024 ? 1.5f : 0.4f);
+                est.setText("Tahmini süre: " + (int)(secs/60) + " dakika");
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+    }
+}
+```
+
+```java
+// DOSYA 170: app/src/main/java/com/jai/app/ui/ImageGenerateActivity.java
+package com.jai.app.ui;
+
+import android.graphics.Bitmap;
+import android.os.Bundle;
+import android.widget.EditText;
+import android.widget.ImageView;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+import com.jai.app.image.GenerativeImageEngine;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class ImageGenerateActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image);
+        EditText p = findViewById(R.id.inputPrompt);
+        ImageView img = findViewById(R.id.imagePreview);
+        
+        findViewById(R.id.btnGenerate).setOnClickListener(v -> {
+            String prompt = p.getText().toString().trim();
+            if(prompt.isEmpty()) return;
+            
+            img.setImageBitmap(null);
+            io.execute(() -> {
+                GenerativeImageEngine engine = new GenerativeImageEngine(this);
+                Bitmap result = engine.generate(prompt);
+                runOnUiThread(() -> img.setImageBitmap(result));
+            });
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 171: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.EditText;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp;
+import com.jai.app.R;
+import com.jai.app.brain.BrainEngine;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+import com.jai.app.data.Message;
+import com.jai.app.memory.RagEngine;
+import com.jai.app.tools.ToolRegistry;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv;
+    private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this);
+        brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db));
+        tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter();
+        rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState); state.setText(JaiApp.get().runtime().getState());
+        EditText input = findViewById(R.id.input);
+        
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id);
+            ui.post(() -> adapter.setItems(msgs));
+        });
+        
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10));
+                    res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", "");
+                    res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Video Üretimi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 3) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 4) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 172: app/src/test/java/com/jai/app/MatrixTest.java
+package com.jai.app;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class MatrixTest {
+    @Test public void testSoftmax() {
+        Matrix x = new Matrix(1, 3); 
+        x.data[0] = 1; x.data[1] = 2; x.data[2] = 3;
+        Matrix y = Matrix.softmax(x); 
+        assertEquals(1.0f, y.data[0] + y.data[1] + y.data[2], 0.001f);
+    }
+}
+```
+
+```java
+// DOSYA 173: app/src/test/java/com/jai/app/Int8TensorTest.java
+package com.jai.app;
+import com.jai.app.model.Int8Tensor;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class Int8TensorTest {
+    @Test public void testQuant() {
+        Matrix m = new Matrix(2, 2); 
+        m.data[0] = 1f; m.data[1] = 2f;
+        Int8Tensor t = Int8Tensor.quantize(m); 
+        assertNotNull(t);
+    }
+}
+```
+
+```java
+// DOSYA 174: app/src/test/java/com/jai/app/SamplerTest.java
+package com.jai.app;
+import com.jai.app.model.Sampler;
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class SamplerTest {
+    @Test public void testSample() {
+        float[] l = {1f, 5f, 2f}; 
+        assertEquals(1, new Sampler().sample(l));
+    }
+}
+```
+
+```java
+// DOSYA 175: app/src/test/java/com/jai/app/CodeLabTest.java
+package com.jai.app;
+import com.jai.app.codelab.CodeLabEngine;
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class CodeLabTest {
+    @Test public void testJson() { 
+        assertTrue(new CodeLabEngine().analyze("{}", "json").ok); 
+    }
+}
+```
+
+```java
+// DOSYA 176: app/src/test/java/com/jai/app/DataTest.java
+package com.jai.app;
+import com.jai.app.data.Message;
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class DataTest {
+    @Test public void testMsg() { 
+        assertEquals("test", new Message(1,"user","test","F","M",false,"OK",null).content); 
+    }
+}
+```
+
+```java
+// DOSYA 177: app/src/main/java/com/jai/app/JaiApp.java
+package com.jai.app;
+
+import android.app.Application;
+import com.jai.app.model.InferenceRuntime;
+import com.jai.app.notify.NotificationHelper;
+
+public class JaiApp extends Application {
+    private static JaiApp instance;
+    private InferenceRuntime runtime;
+
+    @Override public void onCreate() {
+        super.onCreate();
+        instance = this;
+        NotificationHelper.init(this);
+        runtime = new InferenceRuntime();
+        runtime.init(this);
+    }
+
+    public static JaiApp get() { return instance; }
+    public InferenceRuntime runtime() { return runtime; }
+}
+```
+
+```xml
+// DOSYA 178: app/src/main/res/layout/activity_image_gallery.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/listImages" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="8dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 179: app/src/main/res/layout/activity_video_gallery.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/listVideos" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="8dp"/>
+</LinearLayout>
+```
+
+```java
+// DOSYA 180: app/src/main/java/com/jai/app/ui/ImageGalleryActivity.java
+package com.jai.app.ui;
+
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ImageGalleryActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.activity_image_gallery);
+        RecyclerView rv = findViewById(R.id.listImages);
+        rv.setLayoutManager(new GridLayoutManager(this, 2));
+
+        File dir = new File(getFilesDir(), "outputs");
+        List<File> images = new ArrayList<>();
+        if (dir.exists() && dir.listFiles() != null) {
+            for (File f : dir.listFiles()) {
+                if (f.getName().endsWith(".png") || f.getName().endsWith(".jpg")) {
+                    images.add(f);
+                }
+            }
+        }
+        rv.setAdapter(new ImageAdapter(images));
+    }
+}
+```
+
+```java
+// DOSYA 181: app/src/main/java/com/jai/app/ui/VideoGalleryActivity.java
+package com.jai.app.ui;
+
+import android.content.Intent;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.AppDatabase;
+
+public class VideoGalleryActivity extends AppCompatActivity {
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        setContentView(R.layout.activity_video_gallery);
+        RecyclerView rv = findViewById(R.id.listVideos);
+        rv.setLayoutManager(new LinearLayoutManager(this));
+        
+        rv.setAdapter(new VideoAdapter(AppDatabase.get(this).videoJobs().all(), job -> {
+            if (job.outputPath != null) {
+                Intent i = new Intent(this, VideoPlayerActivity.class);
+                i.putExtra("path", job.outputPath);
+                startActivity(i);
+            }
+        }));
+    }
+}
+```
+
+```xml
+// DOSYA 182: app/src/main/AndroidManifest.xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <application android:name=".JaiApp" android:allowBackup="false" android:icon="@drawable/ic_launcher" android:label="Ja.i" android:theme="@style/Theme.Jai">
+        <activity android:name=".ui.RegisterActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <activity android:name=".ui.MainActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoPlayerActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGenerateActivity" android:exported="false"/>
+        <activity android:name=".ui.LearningActivity" android:exported="false"/>
+        <activity android:name=".ui.AdminActivity" android:exported="false"/>
+        <activity android:name=".ui.SettingsActivity" android:exported="false"/>
+        <service android:name=".messaging.MessagingService" android:foregroundServiceType="dataSync"/>
+        <receiver android:name=".work.BootReceiver" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+        </receiver>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
+        </provider>
+    </application>
+</manifest>
+```
+
+```java
+// DOSYA 183: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.EditText;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp;
+import com.jai.app.R;
+import com.jai.app.brain.BrainEngine;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+import com.jai.app.data.Message;
+import com.jai.app.memory.RagEngine;
+import com.jai.app.tools.ToolRegistry;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv;
+    private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this);
+        brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db));
+        tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter();
+        rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState); state.setText(JaiApp.get().runtime().getState());
+        EditText input = findViewById(R.id.input);
+        
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id);
+            ui.post(() -> adapter.setItems(msgs));
+        });
+        
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10));
+                    res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", "");
+                    res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Görsel Galerisi", "Video Üretimi", "Video Galerisi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, ImageGalleryActivity.class));
+                else if (w == 3) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 4) startActivity(new Intent(this, VideoGalleryActivity.class));
+                else if (w == 5) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 6) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 184: app/src/main/java/com/jai/app/model/Matrix.java
+package com.jai.app.model;
+
+public class Matrix {
+    public final int rows, cols;
+    public final float[] data;
+    public Matrix(int r, int c) { this.rows = r; this.cols = c; this.data = new float[r * c]; }
+    public Matrix(int r, int c, float[] d) { this.rows = r; this.cols = c; this.data = d; }
+    public float get(int r, int c) { return data[r * cols + c]; }
+    public void set(int r, int c, float v) { data[r * cols + c] = v; }
+    
+    public static Matrix mul(Matrix A, Matrix B) {
+        if (A.cols != B.rows) throw new IllegalArgumentException("Boyut uyumsuz");
+        Matrix C = new Matrix(A.rows, B.cols);
+        for (int i = 0; i < A.rows; i++) {
+            for (int k = 0; k < A.cols; k++) {
+                float a = A.data[i * A.cols + k];
+                if (a == 0) continue;
+                for (int j = 0; j < B.cols; j++) C.data[i * C.cols + j] += a * B.data[k * B.cols + j];
+            }
+        }
+        return C;
+    }
+    
+    public Matrix transpose() {
+        Matrix T = new Matrix(cols, rows);
+        for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) T.data[c * rows + r] = data[r * cols + c];
+        return T;
+    }
+    
+    public Matrix add(Matrix B) {
+        Matrix C = new Matrix(rows, cols);
+        for (int i = 0; i < data.length; i++) C.data[i] = data[i] + B.data[i];
+        return C;
+    }
+    
+    public static Matrix softmax(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float max = Float.NEGATIVE_INFINITY;
+            for (int j = 0; j < X.cols; j++) if (X.data[row + j] > max) max = X.data[row + j];
+            float sum = 0;
+            for (int j = 0; j < X.cols; j++) { float e = (float) Math.exp(X.data[row + j] - max); Y.data[row + j] = e; sum += e; }
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] /= sum;
+        }
+        return Y;
+    }
+    
+    public static Matrix layerNorm(Matrix X, float[] gamma, float[] beta, float eps) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float mean = 0;
+            for (int j = 0; j < X.cols; j++) mean += X.data[row + j];
+            mean /= X.cols;
+            float var = 0;
+            for (int j = 0; j < X.cols; j++) { float d = X.data[row + j] - mean; var += d * d; }
+            var /= X.cols; float inv = (float) (1.0 / Math.sqrt(var + eps));
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] = (X.data[row + j] - mean) * inv * gamma[j] + beta[j];
+        }
+        return Y;
+    }
+    
+    public static Matrix gelu(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.data.length; i++) { float x = X.data[i]; Y.data[i] = 0.5f * x * (1f + (float) Math.tanh(0.7978845608f * (x + 0.044715f * x * x * x))); }
+        return Y;
+    }
+    
+    public static Matrix relu(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.data.length; i++) Y.data[i] = Math.max(0, X.data[i]);
+        return Y;
+    }
+}
+```
+
+```java
+// DOSYA 185: app/src/main/java/com/jai/app/model/Int8Tensor.java
+package com.jai.app.model;
+
+public class Int8Tensor {
+    public final int rows, cols;
+    public final byte[] data;
+    public final float scale;
+    public final int zeroPoint;
+    
+    public Int8Tensor(int r, int c, byte[] d, float s, int zp) { rows = r; cols = c; data = d; scale = s; zeroPoint = zp; }
+    
+    public Matrix dequantize() {
+        Matrix m = new Matrix(rows, cols);
+        for (int i = 0; i < data.length; i++) m.data[i] = ((data[i] & 0xFF) - zeroPoint) * scale;
+        return m;
+    }
+    
+    public static Int8Tensor quantize(Matrix m) {
+        float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+        for (float v : m.data) { if (v < min) min = v; if (v > max) max = v; }
+        float scale = (max - min) / 255f; if (scale == 0) scale = 1e-8f;
+        int zp = Math.round(-min / scale); if (zp < 0) zp = 0; if (zp > 255) zp = 255;
+        byte[] q = new byte[m.data.length];
+        for (int i = 0; i < m.data.length; i++) { int v = Math.round(m.data[i] / scale) + zp; if (v < 0) v = 0; if (v > 255) v = 255; q[i] = (byte) v; }
+        return new Int8Tensor(m.rows, m.cols, q, scale, zp);
+    }
+}
+```
+
+```java
+// DOSYA 186: app/src/main/java/com/jai/app/model/LayerNorm.java
+package com.jai.app.model;
+public class LayerNorm {
+    public final int dim;
+    public float[] gamma, beta;
+    public final float eps = 1e-5f;
+    public LayerNorm(int dim) { this.dim = dim; this.gamma = new float[dim]; this.beta = new float[dim]; for (int i = 0; i < dim; i++) gamma[i] = 1f; }
+    public Matrix forward(Matrix X) { return Matrix.layerNorm(X, gamma, beta, eps); }
+}
+```
+
+```java
+// DOSYA 187: app/src/main/java/com/jai/app/model/Dense.java
+package com.jai.app.model;
+public class Dense {
+    public final int inDim, outDim;
+    public Matrix W;
+    public float[] b;
+    public Dense(int inDim, int outDim) { this.inDim = inDim; this.outDim = outDim; this.W = new Matrix(outDim, inDim); this.b = new float[outDim]; }
+    public Matrix forward(Matrix X) {
+        Matrix Y = Matrix.mul(X, W.transpose());
+        for (int i = 0; i < Y.rows; i++) for (int j = 0; j < outDim; j++) Y.data[i * outDim + j] += b[j];
+        return Y;
+    }
+}
+```

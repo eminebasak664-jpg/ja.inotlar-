@@ -1,0 +1,945 @@
+```java
+// DOSYA 49: app/src/main/java/com/jai/app/model/Embedding.java
+package com.jai.app.model;
+public class Embedding {
+    public final int vocabSize, dim;
+    public Matrix W;
+    public Embedding(int vocabSize, int dim) {
+        this.vocabSize = vocabSize; this.dim = dim;
+        this.W = new Matrix(vocabSize, dim);
+        java.util.Random r = new java.util.Random(42);
+        for (int i = 0; i < W.data.length; i++) W.data[i] = (float) (r.nextGaussian() * 0.02);
+    }
+    public Matrix forward(int[] tokenIds) {
+        Matrix Y = new Matrix(tokenIds.length, dim);
+        for (int i = 0; i < tokenIds.length; i++) {
+            int id = tokenIds[i];
+            if (id < 0 || id >= vocabSize) id = 0;
+            System.arraycopy(W.data, id * dim, Y.data, i * dim, dim);
+        }
+        return Y;
+    }
+}
+```
+
+```java
+// DOSYA 50: app/src/main/java/com/jai/app/model/MultiHeadAttention.java
+package com.jai.app.model;
+public class MultiHeadAttention {
+    public final int dim, numHeads, headDim;
+    public final Dense qProj, kProj, vProj, oProj;
+    public MultiHeadAttention(int dim, int numHeads) {
+        this.dim = dim; this.numHeads = numHeads; this.headDim = dim / numHeads;
+        this.qProj = new Dense(dim, dim); this.kProj = new Dense(dim, dim);
+        this.vProj = new Dense(dim, dim); this.oProj = new Dense(dim, dim);
+    }
+    public Matrix forward(Matrix X) {
+        int seq = X.rows; Matrix Q = qProj.forward(X); Matrix K = kProj.forward(X); Matrix V = vProj.forward(X);
+        float scale = (float) (1.0 / Math.sqrt(headDim));
+        Matrix out = new Matrix(seq, dim);
+        for (int h = 0; h < numHeads; h++) {
+            int off = h * headDim;
+            Matrix scores = new Matrix(seq, seq);
+            for (int i = 0; i < seq; i++) {
+                for (int j = 0; j <= i; j++) {
+                    float s = 0;
+                    for (int d = 0; d < headDim; d++) s += Q.data[i * dim + off + d] * K.data[j * dim + off + d];
+                    scores.data[i * seq + j] = s * scale;
+                }
+                for (int j = i + 1; j < seq; j++) scores.data[i * seq + j] = Float.NEGATIVE_INFINITY;
+            }
+            Matrix attn = Matrix.softmax(scores);
+            for (int i = 0; i < seq; i++) {
+                for (int d = 0; d < headDim; d++) {
+                    float s = 0;
+                    for (int j = 0; j <= i; j++) s += attn.data[i * seq + j] * V.data[j * dim + off + d];
+                    out.data[i * dim + off + d] = s;
+                }
+            }
+        }
+        return oProj.forward(out);
+    }
+}
+```
+
+```java
+// DOSYA 51: app/src/main/java/com/jai/app/model/FeedForward.java
+package com.jai.app.model;
+public class FeedForward {
+    public final Dense fc1, fc2;
+    public FeedForward(int dim, int hidden) { this.fc1 = new Dense(dim, hidden); this.fc2 = new Dense(hidden, dim); }
+    public Matrix forward(Matrix X) { return fc2.forward(Matrix.gelu(fc1.forward(X))); }
+}
+```
+
+```java
+// DOSYA 52: app/src/main/java/com/jai/app/model/TransformerBlock.java
+package com.jai.app.model;
+public class TransformerBlock {
+    public final LayerNorm ln1, ln2;
+    public final MultiHeadAttention attn;
+    public final FeedForward ffn;
+    public TransformerBlock(int dim, int heads, int ffnHidden) {
+        this.ln1 = new LayerNorm(dim); this.attn = new MultiHeadAttention(dim, heads);
+        this.ln2 = new LayerNorm(dim); this.ffn = new FeedForward(dim, ffnHidden);
+    }
+    public Matrix forward(Matrix X) {
+        Matrix a = ln1.forward(X); Matrix attnOut = attn.forward(a);
+        Matrix x1 = X.add(attnOut); Matrix b = ln2.forward(x1);
+        return x1.add(ffn.forward(b));
+    }
+}
+```
+
+```java
+// DOSYA 53: app/src/main/java/com/jai/app/model/TransformerModel.java
+package com.jai.app.model;
+public class TransformerModel {
+    public final int vocabSize, dim, numLayers, numHeads, ffnHidden, maxSeq;
+    public final Embedding tokenEmb, posEmb;
+    public final TransformerBlock[] blocks;
+    public final LayerNorm finalNorm;
+    public final Dense lmHead;
+    
+    public TransformerModel(int vocabSize, int dim, int numLayers, int numHeads, int ffnHidden, int maxSeq) {
+        this.vocabSize = vocabSize; this.dim = dim; this.numLayers = numLayers; this.numHeads = numHeads; this.ffnHidden = ffnHidden; this.maxSeq = maxSeq;
+        this.tokenEmb = new Embedding(vocabSize, dim); this.posEmb = new Embedding(maxSeq, dim);
+        this.blocks = new TransformerBlock[numLayers];
+        for (int i = 0; i < numLayers; i++) blocks[i] = new TransformerBlock(dim, numHeads, ffnHidden);
+        this.finalNorm = new LayerNorm(dim); this.lmHead = new Dense(dim, vocabSize);
+    }
+    
+    public Matrix forward(int[] tokenIds) {
+        int seq = Math.min(tokenIds.length, maxSeq);
+        Matrix X = tokenEmb.forward(tokenIds);
+        int[] positions = new int[seq];
+        for (int i = 0; i < seq; i++) positions[i] = i;
+        X = X.add(posEmb.forward(positions));
+        for (TransformerBlock b : blocks) X = b.forward(X);
+        X = finalNorm.forward(X);
+        return lmHead.forward(X);
+    }
+}
+```
+
+```java
+// DOSYA 54: app/src/main/java/com/jai/app/model/BpeTokenizer.java
+package com.jai.app.model;
+import android.content.Context;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.HashMap;
+import java.util.Map;
+
+public class BpeTokenizer {
+    private final Map<String, Integer> vocab = new HashMap<>();
+    private final Map<Integer, String> reverse = new HashMap<>();
+    public BpeTokenizer(Context ctx) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(ctx.getAssets().open("vocab.txt")))) {
+            String line; int i = 0;
+            while ((line = r.readLine()) != null) { vocab.put(line, i); reverse.put(i, line); i++; }
+        } catch (Exception e) {
+            for (int i = 0; i < 256; i++) { vocab.put("b" + i, i); reverse.put(i, "b" + i); }
+        }
+    }
+    public int[] encode(String text) {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int[] ids = new int[bytes.length];
+        for (int i = 0; i < bytes.length; i++) ids[i] = vocab.getOrDefault("b" + (bytes[i] & 0xFF), 0);
+        return ids;
+    }
+    public String decode(int[] ids) {
+        StringBuilder sb = new StringBuilder();
+        for (int id : ids) {
+            String tok = reverse.get(id);
+            if (tok != null && tok.startsWith("b")) { try { sb.append((char) Integer.parseInt(tok.substring(1))); } catch (Exception ignored) {} }
+            else if (tok != null) sb.append(tok);
+        }
+        return sb.toString();
+    }
+}
+```
+
+```java
+// DOSYA 55: app/src/main/java/com/jai/app/model/Sampler.java
+package com.jai.app.model;
+import java.util.Random;
+public class Sampler {
+    private final Random rng = new Random();
+    public float temperature = 0.8f;
+    public int topK = 40;
+    
+    public int sample(float[] logits) {
+        int k = Math.min(topK, logits.length);
+        Integer[] indices = new Integer[logits.length];
+        for (int i = 0; i < logits.length; i++) indices[i] = i;
+        java.util.Arrays.sort(indices, (a, b) -> Float.compare(logits[b], logits[a]));
+        
+        float[] probs = new float[k];
+        float max = logits[indices[0]];
+        float sum = 0;
+        for (int i = 0; i < k; i++) {
+            probs[i] = (float) Math.exp((logits[indices[i]] - max) / temperature);
+            sum += probs[i];
+        }
+        for (int i = 0; i < k; i++) probs[i] /= sum;
+        
+        float r = rng.nextFloat();
+        float cum = 0;
+        for (int i = 0; i < k; i++) {
+            cum += probs[i];
+            if (r <= cum) return indices[i];
+        }
+        return indices[0];
+    }
+}
+```
+
+```java
+// DOSYA 56: app/src/main/java/com/jai/app/model/ChatTemplate.java
+package com.jai.app.model;
+public class ChatTemplate {
+    public static String format(String user, String assistant) {
+        return "<|user|>" + user + "<|assistant|>" + (assistant != null ? assistant : "");
+    }
+}
+```
+
+```java
+// DOSYA 57: app/src/main/java/com/jai/app/model/InferenceRuntime.java
+package com.jai.app.model;
+import android.content.Context;
+import android.content.res.AssetManager;
+import com.jai.app.trainer.PtqReader;
+import java.io.InputStream;
+
+public class InferenceRuntime {
+    public TransformerModel model;
+    public BpeTokenizer tokenizer;
+    private String state = "NOT_TRAINED";
+    
+    public void init(Context ctx) {
+        tokenizer = new BpeTokenizer(ctx);
+        AssetManager am = ctx.getAssets();
+        try (InputStream in = am.open("model_int8.bin")) {
+            model = PtqReader.read(in);
+            state = "READY";
+        } catch (Exception e) {
+            model = new TransformerModel(16000, 576, 10, 8, 2304, 1024);
+            state = "NOT_TRAINED";
+        }
+    }
+    
+    public String getState() { return state; }
+    public boolean isReady() { return "READY".equals(state); }
+    
+    public String generate(String prompt, int maxTokens) {
+        if (!isReady()) return "Model yüklenmedi: " + state;
+        int[] ids = tokenizer.encode(prompt);
+        StringBuilder out = new StringBuilder();
+        Sampler sampler = new Sampler();
+        int[] ctxIds = new int[Math.min(ids.length, model.maxSeq)];
+        for (int i = 0; i < ctxIds.length; i++) ctxIds[i] = ids[ids.length - ctxIds.length + i];
+        
+        for (int step = 0; step < maxTokens; step++) {
+            Matrix logits = model.forward(ctxIds);
+            int last = logits.rows - 1;
+            float[] lastLogits = new float[logits.cols];
+            for (int i = 0; i < logits.cols; i++) lastLogits[i] = logits.data[last * logits.cols + i];
+            
+            int nextTok = sampler.sample(lastLogits);
+            if (nextTok == 2) break; // EOS
+            
+            out.append(tokenizer.decode(new int[]{nextTok}));
+            int[] newCtx = new int[Math.min(ctxIds.length + 1, model.maxSeq)];
+            int skip = Math.max(0, ctxIds.length + 1 - model.maxSeq);
+            for (int i = 0; i < ctxIds.length - skip; i++) newCtx[i] = ctxIds[i + skip];
+            newCtx[newCtx.length - 1] = nextTok;
+            ctxIds = newCtx;
+        }
+        return out.toString();
+    }
+}
+```
+
+```java
+// DOSYA 58: app/src/main/java/com/jai/app/model/ModelPaths.java
+package com.jai.app.model;
+public class ModelPaths {
+    public static final String MODEL_INT8 = "model_int8.bin";
+    public static final String VOCAB = "vocab.txt";
+    public static final String IMAGE_MODEL = "image_model_int8.bin";
+}
+```
+
+```java
+// DOSYA 59: app/src/main/java/com/jai/app/model/InferenceConfig.java
+package com.jai.app.model;
+public class InferenceConfig {
+    public static final int VOCAB_SIZE = 16000;
+    public static final int DIM = 576;
+    public static final int NUM_LAYERS = 10;
+    public static final int NUM_HEADS = 8;
+    public static final int FFN_HIDDEN = 2304;
+    public static final int MAX_SEQ = 1024;
+}
+```
+
+```java
+// DOSYA 60: app/src/main/java/com/jai/app/model/ModelStats.java
+package com.jai.app.model;
+public class ModelStats {
+    public static int paramCount(int vocab, int dim, int layers, int ffn) {
+        return (vocab * dim) + (dim * dim * 4 * layers) + (dim * ffn * 2 * layers) + (dim * vocab);
+    }
+}
+```
+
+```java
+// DOSYA 61: app/src/main/java/com/jai/app/model/ExecutionPolicy.java
+package com.jai.app.model;
+public class ExecutionPolicy {
+    public final int maxTools; public final boolean verify;
+    public ExecutionPolicy(int t, boolean v) { maxTools = t; verify = v; }
+    public static ExecutionPolicy forMode(String mode, String effort) {
+        if ("FLASH".equals(mode)) return new ExecutionPolicy(1, false);
+        if ("DEEP".equals(effort)) return new ExecutionPolicy(5, true);
+        return new ExecutionPolicy(2, true);
+    }
+}
+```
+
+```java
+// DOSYA 62: app/src/main/java/com/jai/app/model/ModelState.java
+package com.jai.app.model;
+public enum ModelState { NOT_TRAINED, LOADING, READY, ERROR }
+```
+
+```java
+// DOSYA 63: app/src/main/java/com/jai/app/brain/BrainEngine.java
+package com.jai.app.brain;
+import com.jai.app.model.InferenceRuntime;
+import com.jai.app.memory.RagEngine;
+import com.jai.app.tools.ToolRegistry;
+import com.jai.app.tools.ToolResult;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+
+public class BrainEngine {
+    public static final String MODE_FLASH = "FLASH", MODE_THINK = "THINK";
+    public static final String EFFORT_FAST = "FAST", EFFORT_MID = "MID", EFFORT_MAX = "MAX", EFFORT_DEEP = "DEEP";
+    
+    public enum Intent {
+        MATH, TIME, MEMORY_SEARCH, FILE_READ, FILE_WRITE, ZIP, WEB_REQUEST, LEARNING_REQUEST, IMAGE_GEN, GREETING, THANKS, WHO_ARE_YOU, HELP, UNKNOWN
+    }
+    
+    public static class Result {
+        public String reply, status, trace;
+        public Result(String r, String s, String t) { reply = r; status = s; trace = t; }
+    }
+
+    private final InferenceRuntime runtime;
+    private final RagEngine rag;
+
+    public BrainEngine(InferenceRuntime runtime, RagEngine rag) {
+        this.runtime = runtime; this.rag = rag;
+    }
+
+    public Intent classify(String input) {
+        if (input == null) return Intent.UNKNOWN;
+        String t = input.trim().toLowerCase(new Locale("tr", "TR"));
+        if (t.isEmpty()) return Intent.UNKNOWN;
+        if (t.contains("çiz") || t.contains("resim yap") || t.contains("görsel oluştur")) return Intent.IMAGE_GEN;
+        if (t.matches("^(merhaba|selam|hey|hi|hello|günaydın).*")) return Intent.GREETING;
+        if (t.matches("^(teşekkür|sağ ?ol|thanks).*")) return Intent.THANKS;
+        if (t.contains("sen kimsin") || t.contains("adın ne")) return Intent.WHO_ARE_YOU;
+        if (t.contains("yardım") || t.contains("ne yapabilirsin")) return Intent.HELP;
+        if (t.contains("saat kaç") || t.contains("tarih ne")) return Intent.TIME;
+        if (t.contains("hatırlıyor musun") || t.contains("hafızanda")) return Intent.MEMORY_SEARCH;
+        if (t.contains("dosya") && (t.contains("oluştur") || t.contains("yaz") || t.contains("kaydet"))) return Intent.FILE_WRITE;
+        if (t.contains("zip") || t.contains("arşiv")) return Intent.ZIP;
+        if (t.contains("araştır") || t.contains("internette") || t.contains("web'de")) return Intent.WEB_REQUEST;
+        if (t.contains("öğren")) return Intent.LEARNING_REQUEST;
+        if (t.matches("^[0-9+\\-*/().,\\s]+$") && t.matches(".*[+\\-*/].*")) return Intent.MATH;
+        if (t.contains("hesapla") || t.contains("kaç eder")) return Intent.MATH;
+        return Intent.UNKNOWN;
+    }
+
+    public Result respond(String userInput, String mode, String effort, boolean searchOn, ToolRegistry tools) {
+        Intent intent = classify(userInput);
+        StringBuilder trace = new StringBuilder().append("Amaç: ").append(intent.name()).append('\n');
+
+        switch (intent) {
+            case IMAGE_GEN:
+                return new Result("__NEEDS_IMAGE__" + userInput, "OK", trace.toString());
+            case MATH: {
+                Map<String, Object> in = new HashMap<>(); in.put("expr", userInput);
+                ToolResult r = run(tools, "math", in, trace);
+                return new Result(r.ok ? "Sonuç: " + r.output : "Çözemedim.", r.ok ? "OK" : "PARTIAL", trace.toString());
+            }
+            case TIME: {
+                ToolResult r = run(tools, "clock", new HashMap<>(), trace);
+                return new Result(r.ok ? "Şu an: " + r.output : "Hata", r.ok ? "OK" : "ERROR", trace.toString());
+            }
+            case MEMORY_SEARCH: {
+                Map<String, Object> in = new HashMap<>(); in.put("query", userInput);
+                ToolResult r = run(tools, "memory_search", in, trace);
+                return new Result("Hafıza:\n" + (r.ok ? r.output : "hata"), r.ok ? "OK" : "ERROR", trace.toString());
+            }
+            case WEB_REQUEST:
+                if (!searchOn) return new Result("Web gerekli ama Ara kapalı.", "PARTIAL", trace.toString());
+                return new Result("__NEEDS_WEB__" + userInput, "OK", trace.toString());
+            case LEARNING_REQUEST:
+                return new Result("__NEEDS_LEARNING__" + userInput, "OK", trace.toString());
+            case GREETING: return new Result("Merhaba.", "OK", trace.toString());
+            case THANKS: return new Result("Rica ederim.", "OK", trace.toString());
+            case WHO_ARE_YOU: return new Result("Ben Ja.i. Model: " + runtime.getState(), "OK", trace.toString());
+            case HELP: return new Result("Aritmetik, saat, hafıza, web (Ara açıkken), öğrenme, görsel çizimi çalışır.", "OK", trace.toString());
+            default: {
+                if (runtime.isReady()) {
+                    String ragCtx = rag.buildContext(userInput);
+                    String prompt = (ragCtx.isEmpty() ? "" : "[context]\n" + ragCtx + "[/context]\n") + "Kullanıcı: " + userInput + "\nJa.i:";
+                    String out = runtime.generate(prompt, 128);
+                    return new Result(out.isEmpty() ? "(boş)" : out, "OK", trace.toString());
+                }
+                Map<String, Object> in = new HashMap<>(); in.put("query", userInput);
+                ToolResult r = run(tools, "memory_search", in, trace);
+                if (r.ok && r.output != null && !r.output.contains("bulunamadı")) return new Result("Hafızamda var:\n" + r.output, "OK", trace.toString());
+                return new Result("Bilmiyorum. Model eğitilmedi. (Ara açıksa web'den bakabilirim.)", "PARTIAL", trace.toString());
+            }
+        }
+    }
+
+    private ToolResult run(ToolRegistry tools, String id, Map<String, Object> input, StringBuilder trace) {
+        try {
+            var t = tools.get(id);
+            if (t == null) return ToolResult.err("araç yok");
+            ToolResult r = t.execute(input);
+            trace.append("→ ").append(id).append(r.ok ? " ✓\n" : " ✗\n");
+            return r;
+        } catch (Exception e) {
+            trace.append("✗ ").append(e.getMessage()).append('\n');
+            return ToolResult.err(e.getMessage());
+        }
+    }
+}
+```
+
+```java
+// DOSYA 64: app/src/main/java/com/jai/app/brain/TaskPlanner.java
+package com.jai.app.brain;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+public class TaskPlanner {
+    public static class Step {
+        public final String toolId; public final Map<String, Object> input;
+        public Step(String t, Map<String, Object> i) { toolId = t; input = i; }
+    }
+    public List<Step> plan(String userInput, BrainEngine.Intent intent) {
+        List<Step> steps = new ArrayList<>();
+        if (intent == BrainEngine.Intent.MATH) {
+            Map<String, Object> in = new HashMap<>(); in.put("expr", userInput); steps.add(new Step("math", in));
+        } else if (intent == BrainEngine.Intent.TIME) {
+            steps.add(new Step("clock", new HashMap<>()));
+        }
+        return steps;
+    }
+}
+```
+
+```java
+// DOSYA 65: app/src/main/java/com/jai/app/brain/ExpressionEvaluator.java
+package com.jai.app.brain;
+public final class ExpressionEvaluator {
+    public static Double eval(String raw) {
+        if (raw == null) return null;
+        String s = raw.replace(",", ".").replace(" ", "");
+        if (s.isEmpty()) return null;
+        try {
+            Parser p = new Parser(s);
+            double v = p.parseExpression();
+            if (p.pos != s.length()) return null;
+            if (Double.isNaN(v) || Double.isInfinite(v)) return null;
+            return v;
+        } catch (RuntimeException e) { return null; }
+    }
+    private static final class Parser {
+        final String s; int pos = 0;
+        Parser(String s) { this.s = s; }
+        double parseExpression() {
+            double v = parseTerm();
+            while (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) {
+                char op = s.charAt(pos++); double r = parseTerm();
+                v = (op == '+') ? v + r : v - r;
+            }
+            return v;
+        }
+        double parseTerm() {
+            double v = parseFactor();
+            while (pos < s.length() && (s.charAt(pos) == '*' || s.charAt(pos) == '/')) {
+                char op = s.charAt(pos++); double r = parseFactor();
+                if (op == '*') v *= r; else { if (r == 0) throw new ArithmeticException(); v /= r; }
+            }
+            return v;
+        }
+        double parseFactor() {
+            if (pos < s.length() && s.charAt(pos) == '(') {
+                pos++; double v = parseExpression();
+                if (pos >= s.length() || s.charAt(pos) != ')') throw new RuntimeException();
+                pos++; return v;
+            }
+            if (pos < s.length() && s.charAt(pos) == '-') { pos++; return -parseFactor(); }
+            int start = pos;
+            while (pos < s.length() && (Character.isDigit(s.charAt(pos)) || s.charAt(pos) == '.')) pos++;
+            if (start == pos) throw new RuntimeException();
+            return Double.parseDouble(s.substring(start, pos));
+        }
+    }
+}
+```
+
+```java
+// DOSYA 66: app/src/main/java/com/jai/app/tools/Tool.java
+package com.jai.app.tools;
+import java.util.Map;
+public interface Tool {
+    String id();
+    String name();
+    ToolResult execute(Map<String, Object> input) throws Exception;
+}
+```
+
+```java
+// DOSYA 67: app/src/main/java/com/jai/app/tools/ToolResult.java
+package com.jai.app.tools;
+public class ToolResult {
+    public final boolean ok; public final String output; public final String error;
+    public ToolResult(boolean ok, String o, String e) { this.ok = ok; output = o; error = e; }
+    public static ToolResult ok(String o) { return new ToolResult(true, o, null); }
+    public static ToolResult err(String e) { return new ToolResult(false, null, e); }
+}
+```
+
+```java
+// DOSYA 68: app/src/main/java/com/jai/app/tools/ToolRegistry.java
+package com.jai.app.tools;
+import android.content.Context;
+import com.jai.app.data.AppDatabase;
+import java.util.HashMap;
+import java.util.Map;
+public class ToolRegistry {
+    private final Map<String, Tool> tools = new HashMap<>();
+    public ToolRegistry(Context ctx, AppDatabase db) {
+        register(new MathTool());
+        register(new ClockTool());
+        register(new MemorySearchTool(db));
+        register(new FileReadTool(ctx));
+        register(new FileWriteTool(ctx));
+        register(new ZipTool(ctx));
+    }
+    private void register(Tool t) { tools.put(t.id(), t); }
+    public Tool get(String id) { return tools.get(id); }
+}
+```
+
+```java
+// DOSYA 69: app/src/main/java/com/jai/app/tools/MathTool.java
+package com.jai.app.tools;
+import com.jai.app.brain.ExpressionEvaluator;
+import java.util.Map;
+public class MathTool implements Tool {
+    public String id() { return "math"; }
+    public String name() { return "Matematik"; }
+    public ToolResult execute(Map<String, Object> input) {
+        Object e = input.get("expr");
+        if (e == null) return ToolResult.err("expr yok");
+        Double v = ExpressionEvaluator.eval(e.toString());
+        if (v == null) return ToolResult.err("ifade çözümlenemedi");
+        String out = (v == Math.rint(v) && !Double.isInfinite(v)) ? String.valueOf(v.longValue()) : String.valueOf(v);
+        return ToolResult.ok(out);
+    }
+}
+```
+
+```java
+// DOSYA 70: app/src/main/java/com/jai/app/tools/ClockTool.java
+package com.jai.app.tools;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.Map;
+public class ClockTool implements Tool {
+    public String id() { return "clock"; }
+    public String name() { return "Saat"; }
+    public ToolResult execute(Map<String, Object> input) {
+        return ToolResult.ok(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", new Locale("tr", "TR")).format(new Date()));
+    }
+}
+```
+
+```java
+// DOSYA 71: app/src/main/java/com/jai/app/tools/MemorySearchTool.java
+package com.jai.app.tools;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+public class MemorySearchTool implements Tool {
+    private final AppDatabase db;
+    public MemorySearchTool(AppDatabase db) { this.db = db; }
+    public String id() { return "memory_search"; }
+    public String name() { return "Hafıza"; }
+    public ToolResult execute(Map<String, Object> input) {
+        Object q = input.get("query");
+        if (q == null) return ToolResult.err("query yok");
+        String like = "%" + q.toString().toLowerCase(new Locale("tr", "TR")) + "%";
+        List<KnowledgeEntity> hits = db.knowledge().search(like);
+        if (hits.isEmpty()) return ToolResult.ok("(kayıt bulunamadı)");
+        StringBuilder sb = new StringBuilder();
+        for (KnowledgeEntity k : hits) sb.append("• [").append(k.topic).append("] ").append(k.content).append('\n');
+        return ToolResult.ok(sb.toString().trim());
+    }
+}
+```
+
+```java
+// DOSYA 72: app/src/main/java/com/jai/app/tools/FileReadTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+public class FileReadTool implements Tool {
+    private final Context ctx;
+    public FileReadTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "file_read"; }
+    public String name() { return "Dosya Okuma"; }
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        Object u = input.get("uri");
+        if (u == null) return ToolResult.err("uri yok");
+        try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u.toString()))) {
+            if (in == null) return ToolResult.err("açılamadı");
+            byte[] buf = new byte[8192]; int read; StringBuilder sb = new StringBuilder();
+            while ((read = in.read(buf)) > 0) sb.append(new String(buf, 0, read, StandardCharsets.UTF_8));
+            return ToolResult.ok(sb.toString());
+        }
+    }
+}
+```
+
+```java
+// DOSYA 73: app/src/main/java/com/jai/app/tools/FileWriteTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+public class FileWriteTool implements Tool {
+    private final Context ctx;
+    public FileWriteTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "file_write"; }
+    public String name() { return "Dosya Yazma"; }
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        Object n = input.get("name"); Object c = input.get("content");
+        if (n == null || c == null) return ToolResult.err("eksik parametre");
+        File dir = new File(ctx.getFilesDir(), "outputs"); dir.mkdirs();
+        File f = new File(dir, n.toString().replaceAll("[^a-zA-Z0-9._-]", "_"));
+        try (FileOutputStream out = new FileOutputStream(f)) { out.write(c.toString().getBytes(StandardCharsets.UTF_8)); }
+        return ToolResult.ok(FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".files", f).toString());
+    }
+}
+```
+
+```java
+// DOSYA 74: app/src/main/java/com/jai/app/tools/ZipTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+public class ZipTool implements Tool {
+    private final Context ctx;
+    public ZipTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "zip"; }
+    public String name() { return "ZIP"; }
+    @SuppressWarnings("unchecked")
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        List<String> uris = (List<String>) input.get("uris");
+        if (uris == null || uris.isEmpty()) return ToolResult.err("uri yok");
+        File dir = new File(ctx.getFilesDir(), "outputs"); dir.mkdirs();
+        File zf = new File(dir, "archive_" + System.currentTimeMillis() + ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zf))) {
+            for (String u : uris) {
+                String name = Uri.parse(u).getLastPathSegment();
+                if (name == null) name = "file";
+                name = name.replace("..", "_").replace("/", "_").replace("\\", "_");
+                zos.putNextEntry(new ZipEntry(name));
+                try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u))) {
+                    if (in != null) { byte[] buf = new byte[8192]; int r; while ((r = in.read(buf)) > 0) zos.write(buf, 0, r); }
+                }
+                zos.closeEntry();
+            }
+        }
+        return ToolResult.ok(FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".files", zf).toString());
+    }
+}
+```
+
+```java
+// DOSYA 75: app/src/main/java/com/jai/app/auth/AuthManager.java
+package com.jai.app.auth;
+import android.content.Context;
+import android.content.SharedPreferences;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.User;
+import java.util.UUID;
+public class AuthManager {
+    private final AppDatabase db;
+    private final SharedPreferences prefs;
+    public AuthManager(Context ctx, AppDatabase db) {
+        this.db = db; this.prefs = ctx.getSharedPreferences("jai_auth", Context.MODE_PRIVATE);
+    }
+    public String register(String name, String surname, String email, int age) {
+        if (name == null || name.trim().isEmpty()) return "İsim boş olamaz";
+        if (email == null || !email.contains("@")) return "Geçersiz e-posta";
+        if (db.users().byName(name.trim()) != null) return "Bu isim zaten kayıtlı";
+        if (db.users().byEmail(email.trim().toLowerCase()) != null) return "Bu e-posta zaten kayıtlı";
+        User u = new User(name.trim(), surname, email.trim().toLowerCase(), age, UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+        long id = db.users().insert(u);
+        prefs.edit().putLong("uid", id).apply();
+        return "OK";
+    }
+    public User currentUser() {
+        long id = prefs.getLong("uid", -1);
+        if (id < 0) return null;
+        for (User u : db.users().all()) if (u.id == id) return u;
+        return null;
+    }
+    public boolean isAdmin() { return prefs.getBoolean("is_admin", false); }
+    public void setAdmin(boolean admin) { prefs.edit().putBoolean("is_admin", admin).apply(); }
+}
+```
+
+```java
+// DOSYA 76: app/src/main/java/com/jai/app/auth/AdminSecret.java
+package com.jai.app.auth;
+public final class AdminSecret {
+    public static final String PASS = "12341234";
+    public static boolean check(String p) { return PASS.equals(p); }
+    private AdminSecret() {}
+}
+```
+
+```java
+// DOSYA 77: app/src/main/java/com/jai/app/ui/RegisterActivity.java
+package com.jai.app.ui;
+import android.content.Intent;
+import android.os.Bundle;
+import android.widget.EditText;
+import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+import com.jai.app.auth.AdminSecret;
+import com.jai.app.auth.AuthManager;
+import com.jai.app.data.AppDatabase;
+public class RegisterActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        AppDatabase db = AppDatabase.get(this);
+        AuthManager auth = new AuthManager(this, db);
+        if (auth.currentUser() != null) { startActivity(new Intent(this, MainActivity.class)); finish(); return; }
+        setContentView(R.layout.activity_register);
+        EditText n = findViewById(R.id.inputName), s = findViewById(R.id.inputSurname), e = findViewById(R.id.inputEmail), a = findViewById(R.id.inputAge);
+        findViewById(R.id.btnRegister).setOnClickListener(v -> {
+            try {
+                int age = Integer.parseInt(a.getText().toString());
+                String res = auth.register(n.getText().toString(), s.getText().toString(), e.getText().toString(), age);
+                if ("OK".equals(res)) { startActivity(new Intent(this, MainActivity.class)); finish(); }
+                else Toast.makeText(this, res, Toast.LENGTH_SHORT).show();
+            } catch (Exception ex) { Toast.makeText(this, "Geçersiz yaş", Toast.LENGTH_SHORT).show(); }
+        });
+        findViewById(R.id.txtAdmin).setOnClickListener(v -> {
+            EditText p = new EditText(this);
+            new AlertDialog.Builder(this).setTitle("Admin Şifresi").setView(p)
+                .setPositiveButton("Gir", (d, w) -> {
+                    if (AdminSecret.check(p.getText().toString())) {
+                        auth.setAdmin(true); startActivity(new Intent(this, AdminActivity.class));
+                    } else Toast.makeText(this, "Hatalı şifre", Toast.LENGTH_SHORT).show();
+                }).setNegativeButton("İptal", null).show();
+        });
+    }
+}
+```
+
+```java
+// DOSYA 78: app/src/main/java/com/jai/app/ui/AdminActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.auth.AuthManager;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.User;
+import java.util.List;
+public class AdminActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_admin);
+        AuthManager auth = new AuthManager(this, AppDatabase.get(this));
+        if (!auth.isAdmin()) { finish(); return; }
+        RecyclerView rv = findViewById(R.id.listUsers); rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(new UserAdapter(AppDatabase.get(this).users().all()));
+    }
+    static class UserAdapter extends RecyclerView.Adapter<UserAdapter.VH> {
+        final List<User> users; UserAdapter(List<User> u) { users = u; }
+        @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup p, int t) { return new VH(LayoutInflater.from(p.getContext()).inflate(R.layout.item_user, p, false)); }
+        @Override public void onBindViewHolder(@NonNull VH h, int i) {
+            h.name.setText(users.get(i).name + " " + users.get(i).surname);
+            h.email.setText(users.get(i).email + " · Yaş: " + users.get(i).age);
+        }
+        @Override public int getItemCount() { return users.size(); }
+        static class VH extends RecyclerView.ViewHolder { TextView name, email; VH(@NonNull View v) { super(v); name = v.findViewById(R.id.txtName); email = v.findViewById(R.id.txtEmail); } }
+    }
+}
+```
+
+```java
+// DOSYA 79: app/src/main/java/com/jai/app/ui/MessageAdapter.java
+package com.jai.app.ui;
+import android.view.Gravity;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.Message;
+import java.util.ArrayList;
+import java.util.List;
+public class MessageAdapter extends RecyclerView.Adapter<MessageAdapter.VH> {
+    private final List<Message> items = new ArrayList<>();
+    public void setItems(List<Message> list) { items.clear(); if (list != null) items.addAll(list); notifyDataSetChanged(); }
+    public void append(Message m) { items.add(m); notifyItemInserted(items.size() - 1); }
+    @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup p, int t) { return new VH(LayoutInflater.from(p.getContext()).inflate(R.layout.item_message, p, false)); }
+    @Override public void onBindViewHolder(@NonNull VH h, int i) {
+        Message m = items.get(i); boolean user = "user".equals(m.role);
+        h.bubble.setGravity(user ? Gravity.END : Gravity.START);
+        h.text.setText(m.content);
+        h.text.setBackgroundResource(user ? R.drawable.bg_user_bubble : R.drawable.bg_nova_bubble);
+        h.meta.setText((m.mode != null ? m.mode : "") + (m.status != null ? " · " + m.status : ""));
+    }
+    @Override public int getItemCount() { return items.size(); }
+    static class VH extends RecyclerView.ViewHolder { LinearLayout bubble; TextView text, meta; VH(@NonNull View v) { super(v); bubble = v.findViewById(R.id.bubble); text = v.findViewById(R.id.text); meta = v.findViewById(R.id.meta); } }
+}
+```
+
+```java
+// DOSYA 80: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.EditText;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp;
+import com.jai.app.R;
+import com.jai.app.brain.BrainEngine;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+import com.jai.app.data.Message;
+import com.jai.app.image.WebImageEngine;
+import com.jai.app.memory.RagEngine;
+import com.jai.app.tools.ToolRegistry;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv;
+    private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this);
+        brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db));
+        tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter();
+        rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState); state.setText(JaiApp.get().runtime().getState());
+        EditText input = findViewById(R.id.input);
+        
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id);
+            ui.post(() -> adapter.setItems(msgs));
+        });
+        
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10));
+                    res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", "");
+                    res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Video Üretimi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 3) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 4) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
