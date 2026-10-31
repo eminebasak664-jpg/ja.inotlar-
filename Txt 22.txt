@@ -1,0 +1,1716 @@
+```java
+// DOSYA 91: app/src/main/java/com/jai/app/messaging/MessagingService.java
+package com.jai.app.messaging;
+import android.app.Service; import android.content.Intent; import android.os.IBinder; import androidx.annotation.Nullable;
+public class MessagingService extends Service {
+    @Nullable @Override public IBinder onBind(Intent i) { return null; }
+    @Override public int onStartCommand(Intent i, int f, int s) { return START_STICKY; }
+}
+```
+
+```java
+// DOSYA 92: app/src/main/java/com/jai/app/messaging/MessagingClient.java
+package com.jai.app.messaging;
+import androidx.annotation.NonNull; import androidx.annotation.Nullable; import okhttp3.*; import java.util.concurrent.TimeUnit;
+public class MessagingClient {
+    public interface Listener { void onState(MessagingState state, String detail); void onMessage(String json); }
+    private WebSocket ws; private final OkHttpClient client = new OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build();
+    private MessagingState state = MessagingState.DISCONNECTED; private Listener listener;
+    public void setListener(Listener l) { this.listener = l; }
+    public void connect(String url, String user) {
+        if (state == MessagingState.CONNECTED) return; state = MessagingState.CONNECTING; if (listener != null) listener.onState(state, "Bağlanıyor...");
+        ws = client.newWebSocket(new Request.Builder().url(url + "?user=" + user).build(), new WebSocketListener() {
+            @Override public void onOpen(@NonNull WebSocket w, @NonNull Response r) { state = MessagingState.CONNECTED; if (listener != null) listener.onState(state, "Bağlandı"); }
+            @Override public void onMessage(@NonNull WebSocket w, @NonNull String text) { if (listener != null) listener.onMessage(text); }
+            @Override public void onFailure(@NonNull WebSocket w, @NonNull Throwable t, @Nullable Response r) { state = MessagingState.ERROR; if (listener != null) listener.onState(state, "Hata: " + t.getMessage()); }
+            @Override public void onClosed(@NonNull WebSocket w, int code, @NonNull String reason) { state = MessagingState.DISCONNECTED; if (listener != null) listener.onState(state, "Kapandı"); }
+        });
+    }
+    public void send(String json) { if (ws != null && state == MessagingState.CONNECTED) ws.send(json); }
+    public void close() { if (ws != null) { ws.close(1000, "Bye"); ws = null; } state = MessagingState.DISCONNECTED; }
+}
+```
+
+```java
+// DOSYA 93: app/src/main/java/com/jai/app/messaging/MessagingState.java
+package com.jai.app.messaging;
+public enum MessagingState { DISCONNECTED, CONNECTING, CONNECTED, ERROR }
+```
+
+```java
+// DOSYA 94: app/src/main/java/com/jai/app/video/VideoPipeline.java
+package com.jai.app.video;
+import android.content.Context; import android.graphics.Bitmap; import com.jai.app.data.VideoJobEntity; import com.jai.app.sr.SRPipeline; import com.jai.app.sr.SRModel; import java.io.File;
+public class VideoPipeline {
+    private final Context ctx; public VideoPipeline(Context ctx) { this.ctx = ctx; }
+    public boolean runJob(VideoJobEntity job, ProgressListener listener) {
+        try {
+            File dir = new File(ctx.getFilesDir(), "outputs/video/job_" + job.id); dir.mkdirs();
+            FrameGenerator gen = new FrameGenerator(job.prompt, job.quality, job.quality); VideoEncoder enc = new VideoEncoder(dir, job.quality, job.quality);
+            SRPipeline sr = job.quality == 512 ? new SRPipeline(new SRModel()) : null;
+            for (int i = job.framesDone; i < job.framesTotal; i++) {
+                Bitmap f = gen.renderFrame(i, job.framesTotal); if (sr != null) f = sr.upscale(f);
+                enc.writeFrame(f, i); f.recycle(); if (listener != null) listener.onProgress(i + 1, job.framesTotal);
+            }
+            enc.finish(); job.outputPath = new File(dir, "video.mp4").getAbsolutePath(); return true;
+        } catch (Exception e) { return false; }
+    }
+    public interface ProgressListener { void onProgress(int done, int total); }
+}
+```
+
+```java
+// DOSYA 95: app/src/main/java/com/jai/app/video/VideoEncoder.java
+package com.jai.app.video;
+import android.graphics.Bitmap; import android.media.MediaCodec; import android.media.MediaCodecInfo; import android.media.MediaFormat; import android.media.MediaMuxer; import java.io.File; import java.nio.ByteBuffer;
+public class VideoEncoder {
+    private MediaCodec videoCodec; private MediaCodec audioCodec; private MediaMuxer muxer;
+    private int videoTrack = -1; private int audioTrack = -1; private boolean muxerStarted = false; private long frameTimeUs = 0;
+    public VideoEncoder(File dir, int w, int h) throws Exception {
+        MediaFormat vFmt = MediaFormat.createVideoFormat("video/avc", w, h);
+        vFmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar);
+        vFmt.setInteger(MediaFormat.KEY_BIT_RATE, 4000000); vFmt.setInteger(MediaFormat.KEY_FRAME_RATE, 30); vFmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        videoCodec = MediaCodec.createEncoderByType("video/avc"); videoCodec.configure(vFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); videoCodec.start();
+        MediaFormat aFmt = MediaFormat.createAudioFormat("audio/mp4a-latm", 44100, 2);
+        aFmt.setInteger(MediaFormat.KEY_BIT_RATE, 64000); aFmt.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+        audioCodec = MediaCodec.createEncoderByType("audio/mp4a-latm"); audioCodec.configure(aFmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); audioCodec.start();
+        muxer = new MediaMuxer(new File(dir, "video.mp4").getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+    }
+    public void writeFrame(Bitmap bmp, int idx) throws Exception {
+        int inIdx = videoCodec.dequeueInputBuffer(10000);
+        if (inIdx >= 0) {
+            ByteBuffer buf = videoCodec.getInputBuffer(inIdx);
+            if (buf != null) {
+                int[] pixels = new int[bmp.getWidth() * bmp.getHeight()]; bmp.getPixels(pixels, 0, bmp.getWidth(), 0, 0, bmp.getWidth(), bmp.getHeight());
+                byte[] yuv = rgbToYuv420SemiPlanar(pixels, bmp.getWidth(), bmp.getHeight()); buf.clear(); buf.put(yuv);
+                videoCodec.queueInputBuffer(inIdx, 0, yuv.length, frameTimeUs, 0);
+            }
+        }
+        frameTimeUs += 33333L;
+        int aInIdx = audioCodec.dequeueInputBuffer(10000);
+        if (aInIdx >= 0) {
+            ByteBuffer buf = audioCodec.getInputBuffer(aInIdx);
+            if (buf != null) { byte[] silence = new byte[2048]; buf.clear(); buf.put(silence); audioCodec.queueInputBuffer(aInIdx, 0, silence.length, frameTimeUs - 33333L, 0); }
+        }
+        drainCodec(videoCodec, true); drainCodec(audioCodec, false);
+    }
+    private void drainCodec(MediaCodec codec, boolean isVideo) {
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo(); int outIdx = codec.dequeueOutputBuffer(info, 0);
+        if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+            if (isVideo) videoTrack = muxer.addTrack(codec.getOutputFormat()); else audioTrack = muxer.addTrack(codec.getOutputFormat());
+            if (videoTrack != -1 && audioTrack != -1 && !muxerStarted) { muxer.start(); muxerStarted = true; }
+        } else if (outIdx >= 0) {
+            ByteBuffer outBuf = codec.getOutputBuffer(outIdx);
+            if (outBuf != null && info.size > 0 && muxerStarted) {
+                outBuf.position(info.offset); outBuf.limit(info.offset + info.size); muxer.writeSampleData(isVideo ? videoTrack : audioTrack, outBuf, info);
+            }
+            codec.releaseOutputBuffer(outIdx, false);
+        }
+    }
+    private byte[] rgbToYuv420SemiPlanar(int[] argb, int width, int height) {
+        int frameSize = width * height; byte[] yuv = new byte[frameSize * 3 / 2]; int yIndex = 0, uvIndex = frameSize;
+        for (int j = 0; j < height; j++) {
+            for (int i = 0; i < width; i++) {
+                int r = (argb[j * width + i] >> 16) & 0xff; int g = (argb[j * width + i] >> 8) & 0xff; int b = argb[j * width + i] & 0xff;
+                int y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+                yuv[yIndex++] = (byte) Math.max(0, Math.min(255, y));
+                if (j % 2 == 0 && i % 2 == 0) {
+                    int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128; int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+                    yuv[uvIndex++] = (byte) Math.max(0, Math.min(255, u)); yuv[uvIndex++] = (byte) Math.max(0, Math.min(255, v));
+                }
+            }
+        }
+        return yuv;
+    }
+    public void finish() {
+        if (videoCodec != null) { videoCodec.stop(); videoCodec.release(); }
+        if (audioCodec != null) { audioCodec.stop(); audioCodec.release(); }
+        if (muxer != null && muxerStarted) { muxer.stop(); muxer.release(); }
+    }
+}
+```
+
+```java
+// DOSYA 96: app/src/main/java/com/jai/app/video/AudioTrackWriter.java
+package com.jai.app.video;
+import android.media.MediaCodec; import android.media.MediaCodecInfo; import android.media.MediaFormat; import android.media.MediaMuxer; import java.nio.ByteBuffer;
+public class AudioTrackWriter {
+    private MediaCodec codec; private MediaMuxer muxer; private int trackIndex = -1; private boolean muxerStarted = false;
+    public void init(MediaMuxer muxer) throws Exception {
+        this.muxer = muxer; MediaFormat format = MediaFormat.createAudioFormat("audio/mp4a-latm", 44100, 2);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, 64000); format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+        codec = MediaCodec.createEncoderByType("audio/mp4a-latm"); codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); codec.start();
+    }
+    public void writeSilence(long presentationTimeUs) {
+        try {
+            int inIdx = codec.dequeueInputBuffer(1000);
+            if (inIdx >= 0) {
+                ByteBuffer buffer = codec.getInputBuffer(inIdx);
+                if (buffer != null) { buffer.clear(); byte[] silence = new byte[1024]; buffer.put(silence); codec.queueInputBuffer(inIdx, 0, silence.length, presentationTimeUs, 0); }
+            }
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo(); int outIdx = codec.dequeueOutputBuffer(info, 1000);
+            if (outIdx >= 0) {
+                if (trackIndex < 0) trackIndex = muxer.addTrack(codec.getOutputFormat());
+                ByteBuffer outBuf = codec.getOutputBuffer(outIdx);
+                if (outBuf != null && info.size > 0 && muxerStarted) { outBuf.position(info.offset); outBuf.limit(info.offset + info.size); muxer.writeSampleData(trackIndex, outBuf, info); }
+                codec.releaseOutputBuffer(outIdx, false);
+            }
+        } catch (Exception ignored) {}
+    }
+    public void setMuxerStarted(boolean started) { this.muxerStarted = started; }
+    public void finish() { try { codec.stop(); codec.release(); } catch (Exception ignored) {} }
+}
+```
+
+```java
+// DOSYA 97: app/src/main/java/com/jai/app/video/FrameGenerator.java
+package com.jai.app.video;
+import android.graphics.Bitmap; import android.graphics.Canvas; import android.graphics.Color; import android.graphics.Paint;
+public class FrameGenerator {
+    private final int w, h; private final int baseHue;
+    public FrameGenerator(String prompt, int w, int h) { this.w = w; this.h = h; this.baseHue = Math.abs(prompt.hashCode()) % 360; }
+    public Bitmap renderFrame(int idx, int total) {
+        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bmp); Paint p = new Paint();
+        float t = (float) idx / total; c.drawColor(Color.HSVToColor(new float[]{ (baseHue + t * 60) % 360, 0.5f, 0.2f }));
+        p.setColor(Color.HSVToColor(new float[]{ (baseHue + 180 + t * 90) % 360, 0.8f, 0.9f }));
+        c.drawCircle(w/2f + (float)Math.sin(t*6.28)*w/4, h/2f + (float)Math.cos(t*6.28)*h/4, w/8f, p);
+        return bmp;
+    }
+}
+```
+
+```java
+// DOSYA 98: app/src/main/java/com/jai/app/sr/SRModel.java
+package com.jai.app.sr;
+public class SRModel {
+    public int[] upscale(int[] in, int w, int h) {
+        int ow = w * 2, oh = h * 2; int[] out = new int[ow * oh];
+        for (int y = 0; y < oh; y++) for (int x = 0; x < ow; x++) out[y * ow + x] = in[(y / 2) * w + (x / 2)];
+        return out;
+    }
+}
+```
+
+```java
+// DOSYA 99: app/src/main/java/com/jai/app/sr/SRLoader.java
+package com.jai.app.sr;
+import android.content.Context;
+public class SRLoader { public static SRModel load(Context ctx) { return new SRModel(); } }
+```
+
+```java
+// DOSYA 100: app/src/main/java/com/jai/app/sr/SRPipeline.java
+package com.jai.app.sr;
+import android.graphics.Bitmap;
+public class SRPipeline {
+    private final SRModel model; public SRPipeline(SRModel m) { this.model = m; }
+    public Bitmap upscale(Bitmap src) {
+        int w = src.getWidth(), h = src.getHeight(); int[] px = new int[w * h]; src.getPixels(px, 0, w, 0, 0, w, h);
+        int[] up = model.upscale(px, w, h); Bitmap out = Bitmap.createBitmap(w * 2, h * 2, Bitmap.Config.ARGB_8888);
+        out.setPixels(up, 0, w * 2, 0, 0, w * 2, h * 2); return out;
+    }
+}
+```
+
+```java
+// DOSYA 101: app/src/main/java/com/jai/app/image/WebImageEngine.java
+package com.jai.app.image;
+import android.content.Context; import android.graphics.Bitmap; import android.graphics.Canvas; import android.graphics.Color; import android.graphics.Paint; import com.jai.app.data.AppDatabase; import com.jai.app.web.WebResearchEngine;
+public class WebImageEngine {
+    private final Context ctx; private final AppDatabase db;
+    public WebImageEngine(Context ctx) { this.ctx = ctx; this.db = AppDatabase.get(ctx); }
+    public Bitmap generate(String prompt) {
+        String context = "";
+        try { var res = new WebResearchEngine(db).search(prompt + " nasıl görünür, rengi nedir"); if (res.ok) context = res.output.toLowerCase(); } catch (Exception ignored) {}
+        int mainColor = Color.GRAY;
+        if (context.contains("kırmızı") || prompt.contains("kırmızı")) mainColor = Color.RED;
+        else if (context.contains("mavi") || prompt.contains("mavi")) mainColor = Color.BLUE;
+        else if (context.contains("yeşil") || prompt.contains("yeşil")) mainColor = Color.GREEN;
+        else mainColor = Color.HSVToColor(new float[]{ Math.abs(prompt.hashCode()) % 360, 0.7f, 0.7f });
+        int size = 512; Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bmp); Paint p = new Paint(); p.setAntiAlias(true);
+        c.drawColor(Color.rgb(20, 20, 30)); p.setColor(mainColor); p.setStyle(Paint.Style.FILL); c.drawCircle(size/2f, size/2f, size/3f, p);
+        p.setColor(Color.argb(50, 0, 0, 0)); c.drawCircle(size/2f, size/2f + size/8f, size/3f, p);
+        p.setColor(Color.rgb(50, 100, 50)); p.setStrokeWidth(10f); p.setStyle(Paint.Style.STROKE); c.drawLine(size/2f, size/3f, size/2f + 20, size/3f - 40, p);
+        return bmp;
+    }
+}
+```
+
+```java
+// DOSYA 102: app/src/main/java/com/jai/app/image/ImageJob.java
+package com.jai.app.image;
+public class ImageJob { public String prompt; public String outputPath; }
+```
+
+```java
+// DOSYA 103: app/src/main/java/com/jai/app/web/WebResearchEngine.java
+package com.jai.app.web;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.KnowledgeEntity; import com.jai.app.tools.ToolResult;
+import org.jsoup.Jsoup; import org.jsoup.nodes.Document; import org.jsoup.nodes.Element; import java.net.URLEncoder;
+public class WebResearchEngine {
+    private final AppDatabase db; public WebResearchEngine(AppDatabase db) { this.db = db; }
+    public ToolResult search(String query) {
+        try {
+            Document doc = Jsoup.connect("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8")).userAgent("Mozilla/5.0").timeout(10000).get();
+            StringBuilder sb = new StringBuilder(); int count = 0;
+            for (Element a : doc.select("a.result__a")) {
+                String title = a.text(); String href = a.attr("href"); String snip = "";
+                if (a.parent() != null && a.parent().selectFirst(".result__snippet") != null) snip = a.parent().selectFirst(".result__snippet").text();
+                sb.append("• ").append(title).append("\n  ").append(snip).append("\n\n");
+                db.knowledge().insert(new KnowledgeEntity(query, title + " - " + snip, href));
+                if (++count >= 5) break;
+            }
+            return count == 0 ? ToolResult.ok("(Sonuç yok)") : ToolResult.ok(sb.toString());
+        } catch (Exception e) { return ToolResult.err(e.getMessage()); }
+    }
+}
+```
+
+```java
+// DOSYA 104: app/src/main/java/com/jai/app/memory/RagEngine.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.KnowledgeEntity; import java.util.List;
+public class RagEngine {
+    private final AppDatabase db; public RagEngine(AppDatabase db) { this.db = db; }
+    public String buildContext(String query) {
+        List<KnowledgeEntity> hits = db.knowledge().search("%" + query.toLowerCase() + "%");
+        StringBuilder sb = new StringBuilder();
+        for (KnowledgeEntity k : hits) sb.append("[").append(k.topic).append("] ").append(k.content).append("\n");
+        return sb.toString();
+    }
+}
+```
+
+```java
+// DOSYA 105: app/src/main/java/com/jai/app/memory/MemoryBank.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.KnowledgeEntity;
+public class MemoryBank {
+    private final AppDatabase db; public MemoryBank(AppDatabase db) { this.db = db; }
+    public void save(String topic, String content, String source) { db.knowledge().insert(new KnowledgeEntity(topic, content, source)); }
+}
+```
+
+```java
+// DOSYA 106: app/src/main/java/com/jai/app/memory/LocalSearchEngine.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.KnowledgeEntity; import java.util.List;
+public class LocalSearchEngine {
+    private final AppDatabase db; public LocalSearchEngine(AppDatabase db) { this.db = db; }
+    public List<KnowledgeEntity> search(String q) { return db.knowledge().search("%" + q.toLowerCase() + "%"); }
+}
+```
+
+```java
+// DOSYA 107: app/src/main/java/com/jai/app/codelab/CodeLabEngine.java
+package com.jai.app.codelab;
+public class CodeLabEngine {
+    public static class Analysis { public final boolean ok; public final String report; public Analysis(boolean ok, String report) { this.ok = ok; this.report = report; } }
+    public Analysis analyze(String code, String lang) {
+        if (code == null || code.isEmpty()) return new Analysis(false, "Boş kod");
+        if (lang.equals("json")) { try { new org.json.JSONObject(code); return new Analysis(true, "Geçerli JSON"); } catch (Exception e) { return new Analysis(false, "Geçersiz JSON: " + e.getMessage()); } }
+        int braces = 0, parens = 0; boolean inString = false, inChar = false, inLineComment = false, inBlockComment = false; char prev = 0;
+        for (char c : code.toCharArray()) {
+            if (inLineComment) { if (c == '\n') inLineComment = false; continue; }
+            if (inBlockComment) { if (prev == '*' && c == '/') inBlockComment = false; prev = c; continue; }
+            if (!inString && !inChar) { if (prev == '/' && c == '/') { inLineComment = true; prev = c; continue; } if (prev == '/' && c == '*') { inBlockComment = true; prev = c; continue; } }
+            if (c == '"' && prev != '\\') inString = !inString; if (c == '\'' && prev != '\\') inChar = !inChar;
+            if (!inString && !inChar) { if (c == '{') braces++; else if (c == '}') braces--; else if (c == '(') parens++; else if (c == ')') parens--; }
+            prev = c;
+        }
+        if (braces == 0 && parens == 0 && !inString) return new Analysis(true, "Denge tamam");
+        return new Analysis(false, "Denge bozuk: {}=" + braces + " ()=" + parens + " string=" + inString);
+    }
+}
+```
+
+```java
+// DOSYA 108: app/src/main/java/com/jai/app/speech/SpeechManager.java
+package com.jai.app.speech;
+import android.content.Context; import android.speech.tts.TextToSpeech; import java.util.Locale;
+public class SpeechManager {
+    private TextToSpeech tts;
+    public SpeechManager(Context ctx) { tts = new TextToSpeech(ctx, status -> { if (status == TextToSpeech.SUCCESS) tts.setLanguage(new Locale("tr", "TR")); }); }
+    public void speak(String text) { if (tts != null) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, null); }
+    public void shutdown() { if (tts != null) tts.shutdown(); }
+}
+```
+
+```java
+// DOSYA 109: app/src/main/java/com/jai/app/resource/ResourceManager.java
+package com.jai.app.resource;
+import android.app.ActivityManager; import android.content.Context; import android.os.StatFs;
+public class ResourceManager {
+    private final Context ctx; public ResourceManager(Context ctx) { this.ctx = ctx; }
+    public long freeRamMb() { ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo(); ((ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi); return mi.availMem / (1024 * 1024); }
+    public long freeStorageMb() { StatFs s = new StatFs(ctx.getFilesDir().getAbsolutePath()); return (s.getAvailableBlocksLong() * s.getBlockSizeLong()) / (1024 * 1024); }
+}
+```
+
+```java
+// DOSYA 110: app/src/main/java/com/jai/app/util/NetworkUtil.java
+package com.jai.app.util;
+import android.content.Context; import android.net.ConnectivityManager; import android.net.NetworkInfo;
+public class NetworkUtil {
+    public static boolean isOnline(Context ctx) {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false; NetworkInfo ni = cm.getActiveNetworkInfo(); return ni != null && ni.isConnected();
+    }
+}
+```
+
+```java
+// DOSYA 111: app/src/main/java/com/jai/app/util/DateTimeUtil.java
+package com.jai.app.util;
+import java.text.SimpleDateFormat; import java.util.Date; import java.util.Locale;
+public class DateTimeUtil { public static String now() { return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", new Locale("tr")).format(new Date()); } }
+```
+
+```java
+// DOSYA 112: app/src/main/java/com/jai/app/util/ThreadUtil.java
+package com.jai.app.util;
+import android.os.Handler; import android.os.Looper; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class ThreadUtil { public static final ExecutorService io = Executors.newSingleThreadExecutor(); public static final Handler ui = new Handler(Looper.getMainLooper()); }
+```
+
+```java
+// DOSYA 113: app/src/main/java/com/jai/app/util/JsonUtil.java
+package com.jai.app.util;
+import org.json.JSONObject;
+public class JsonUtil { public static JSONObject obj(String... kv) { JSONObject o = new JSONObject(); try { for (int i = 0; i + 1 < kv.length; i += 2) o.put(kv[i], kv[i + 1]); } catch (Exception ignored) {} return o; } }
+```
+
+```java
+// DOSYA 114: app/src/main/java/com/jai/app/notify/NotificationHelper.java
+package com.jai.app.notify;
+import android.app.NotificationChannel; import android.app.NotificationManager; import android.content.Context; import android.os.Build; import androidx.core.app.NotificationCompat; import com.jai.app.R;
+public class NotificationHelper {
+    public static void init(Context ctx) { if (Build.VERSION.SDK_INT >= 26) { NotificationChannel ch = new NotificationChannel("jai", "Ja.i", NotificationManager.IMPORTANCE_DEFAULT); ctx.getSystemService(NotificationManager.class).createNotificationChannel(ch); } }
+    public static void show(Context ctx, String title, String text) {
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, "jai").setContentTitle(title).setContentText(text).setSmallIcon(R.drawable.ic_launcher).setAutoCancel(true);
+        ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify((int)System.currentTimeMillis(), b.build());
+    }
+}
+```
+
+```java
+// DOSYA 115: app/src/main/java/com/jai/app/ui/ThemeHelper.java
+package com.jai.app.ui;
+import androidx.appcompat.app.AppCompatDelegate;
+public class ThemeHelper {
+    public static void apply(String mode) {
+        if ("light".equals(mode)) AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+        else if ("system".equals(mode)) AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+        else AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+    }
+}
+```
+
+```java
+// DOSYA 116: app/src/main/java/com/jai/app/ui/ConversationDrawer.java
+package com.jai.app.ui;
+import android.app.AlertDialog; import android.content.Context; import com.jai.app.data.AppDatabase; import com.jai.app.data.Conversation; import java.util.List;
+public class ConversationDrawer {
+    public static void show(Context ctx, AppDatabase db, OnPick cb) {
+        List<Conversation> list = db.conversations().all(); String[] titles = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) titles[i] = list.get(i).title;
+        new AlertDialog.Builder(ctx).setTitle("Sohbetler").setItems(titles, (d, w) -> cb.pick(list.get(w))).show();
+    }
+    public interface OnPick { void pick(Conversation c); }
+}
+```
+
+```java
+// DOSYA 117: app/src/main/java/com/jai/app/conversation/ConversationManager.java
+package com.jai.app.conversation;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.Conversation;
+public class ConversationManager {
+    private final AppDatabase db; public ConversationManager(AppDatabase db) { this.db = db; }
+    public Conversation create(String title) { long id = db.conversations().insert(new Conversation(title)); return db.conversations().byId(id); }
+}
+```
+
+```java
+// DOSYA 118: app/src/main/java/com/jai/app/learning/LearningQueue.java
+package com.jai.app.learning;
+import com.jai.app.data.AppDatabase; import com.jai.app.data.LearningTaskEntity;
+public class LearningQueue {
+    private final AppDatabase db; public LearningQueue(AppDatabase db) { this.db = db; }
+    public void enqueue(String topic, boolean urgent) { db.learningTasks().insert(new LearningTaskEntity(topic, urgent ? 10 : 0)); }
+}
+```
+
+```java
+// DOSYA 119: app/src/main/java/com/jai/app/learning/LearningVerifier.java
+package com.jai.app.learning;
+import com.jai.app.data.KnowledgeEntity;
+public class LearningVerifier {
+    public boolean conflicts(KnowledgeEntity existing, String newContent) {
+        if (existing == null || newContent == null) return false;
+        String a = existing.content.toLowerCase().replaceAll("[^a-z0-9ğüşıöç ]", "");
+        String b = newContent.toLowerCase().replaceAll("[^a-z0-9ğüşıöç ]", "");
+        String[] wordsA = a.split("\\s+"); String[] wordsB = b.split("\\s+");
+        if (wordsA.length < 3 || wordsB.length < 3) return false;
+        int common = 0; for (String wa : wordsA) for (String wb : wordsB) if (wa.equals(wb) && wa.length() > 3) { common++; break; }
+        return common > 2 && (b.contains("değil") || b.contains("yanlış"));
+    }
+}
+```
+
+```java
+// DOSYA 120: app/src/main/java/com/jai/app/trainer/Optimizer.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+public class Optimizer { public final float lr; public Optimizer(float lr) { this.lr = lr; } public void step(Matrix param, Matrix grad) { for (int i = 0; i < param.data.length; i++) param.data[i] -= lr * grad.data[i]; } }
+```
+
+```java
+// DOSYA 121: app/src/main/java/com/jai/app/trainer/Loss.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+public class Loss {
+    public static float crossEntropy(Matrix logits, int[] targets) {
+        float total = 0;
+        for (int i = 0; i < logits.rows; i++) {
+            int row = i * logits.cols; float max = Float.NEGATIVE_INFINITY;
+            for (int j = 0; j < logits.cols; j++) if (logits.data[row + j] > max) max = logits.data[row + j];
+            float sum = 0; for (int j = 0; j < logits.cols; j++) sum += (float) Math.exp(logits.data[row + j] - max);
+            total -= (logits.data[row + targets[i]] - max - (float) Math.log(sum));
+        }
+        return total / logits.rows;
+    }
+}
+```
+
+```java
+// DOSYA 122: app/src/main/java/com/jai/app/trainer/DataLoader.java
+package com.jai.app.trainer;
+import java.io.BufferedReader; import java.io.FileReader; import java.util.ArrayList; import java.util.List;
+public class DataLoader {
+    public static List<String> loadLines(String path) {
+        List<String> lines = new ArrayList<>();
+        try (BufferedReader r = new BufferedReader(new FileReader(path))) { String line; while ((line = r.readLine()) != null) if (!line.trim().isEmpty()) lines.add(line); } catch (Exception ignored) {}
+        return lines;
+    }
+}
+```
+
+```java
+// DOSYA 123: app/src/main/java/com/jai/app/trainer/Trainer.java
+package com.jai.app.trainer;
+import com.jai.app.model.TransformerModel;
+public class Trainer {
+    public final TransformerModel model; public Trainer(TransformerModel m) { this.model = m; }
+    public float trainStep(int[] input, int[] targets) { return 0.0f; }
+}
+```
+
+```java
+// DOSYA 124: app/src/main/java/com/jai/app/trainer/CheckpointIO.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix; import com.jai.app.model.TransformerModel; import java.io.DataOutputStream; import java.io.FileOutputStream;
+public class CheckpointIO {
+    public static void save(TransformerModel m, String path) throws Exception {
+        try (DataOutputStream out = new DataOutputStream(new FileOutputStream(path))) {
+            out.writeInt(m.vocabSize); out.writeInt(m.dim); out.writeInt(m.numLayers);
+            writeMatrix(out, m.tokenEmb.W); writeMatrix(out, m.posEmb.W);
+            for (var b : m.blocks) {
+                writeMatrix(out, b.attn.qProj.W); writeMatrix(out, b.attn.kProj.W);
+                writeMatrix(out, b.attn.vProj.W); writeMatrix(out, b.attn.oProj.W);
+                writeMatrix(out, b.ffn.fc1.W); writeMatrix(out, b.ffn.fc2.W);
+            }
+            writeMatrix(out, m.lmHead.W);
+        }
+    }
+    private static void writeMatrix(DataOutputStream out, Matrix mat) throws Exception { out.writeInt(mat.rows); out.writeInt(mat.cols); for (float v : mat.data) out.writeFloat(v); }
+}
+```
+
+```java
+// DOSYA 125: app/src/main/java/com/jai/app/trainer/PtqCalibrator.java
+package com.jai.app.trainer;
+public class PtqCalibrator { public float min = Float.MAX_VALUE, max = -Float.MAX_VALUE; public void observe(float v) { if (v < min) min = v; if (v > max) max = v; } }
+```
+
+```java
+// DOSYA 126: app/src/main/java/com/jai/app/trainer/PtqWriter.java
+package com.jai.app.trainer;
+import com.jai.app.model.Int8Tensor; import com.jai.app.model.Matrix; import java.io.DataOutputStream;
+public class PtqWriter { public static void writeMatrix(DataOutputStream out, Matrix m) throws Exception { Int8Tensor t = Int8Tensor.quantize(m); out.writeInt(t.rows); out.writeInt(t.cols); out.writeFloat(t.scale); out.writeInt(t.zeroPoint); out.write(t.data); } }
+```
+
+```java
+// DOSYA 127: app/src/main/java/com/jai/app/trainer/PtqReader.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix; import com.jai.app.model.TransformerModel; import java.io.DataInputStream; import java.io.InputStream;
+public class PtqReader {
+    public static TransformerModel read(InputStream in) throws Exception {
+        DataInputStream din = new DataInputStream(in); int vocab = din.readInt(); int dim = din.readInt(); int layers = din.readInt();
+        TransformerModel m = new TransformerModel(vocab, dim, layers, 8, 2304, 1024);
+        readMatrix(din, m.tokenEmb.W); readMatrix(din, m.posEmb.W);
+        for (var b : m.blocks) {
+            readMatrix(din, b.attn.qProj.W); readMatrix(din, b.attn.kProj.W); readMatrix(din, b.attn.vProj.W); readMatrix(din, b.attn.oProj.W);
+            readMatrix(din, b.ffn.fc1.W); readMatrix(din, b.ffn.fc2.W);
+        }
+        readMatrix(din, m.lmHead.W); return m;
+    }
+    private static void readMatrix(DataInputStream din, Matrix target) throws Exception {
+        int rows = din.readInt(); int cols = din.readInt(); float scale = din.readFloat(); int zp = din.readInt();
+        byte[] data = new byte[rows * cols]; din.readFully(data);
+        for (int i = 0; i < data.length; i++) target.data[i] = ((data[i] & 0xFF) - zp) * scale;
+    }
+}
+```
+
+```java
+// DOSYA 128: app/src/main/java/com/jai/app/model/PositionalEncoding.java
+package com.jai.app.model;
+public class PositionalEncoding {
+    public static Matrix encode(int seqLen, int dim) {
+        Matrix pos = new Matrix(seqLen, dim);
+        for (int i = 0; i < seqLen; i++) {
+            for (int j = 0; j < dim; j += 2) {
+                double angle = i / Math.pow(10000, j / (double) dim);
+                pos.data[i * dim + j] = (float) Math.sin(angle);
+                if (j + 1 < dim) pos.data[i * dim + j + 1] = (float) Math.cos(angle);
+            }
+        }
+        return pos;
+    }
+}
+```
+
+```java
+// DOSYA 129: app/src/main/java/com/jai/app/model/AttentionMask.java
+package com.jai.app.model;
+public class AttentionMask {
+    public static Matrix causal(int seqLen) {
+        Matrix mask = new Matrix(seqLen, seqLen);
+        for (int i = 0; i < seqLen; i++) for (int j = 0; j < seqLen; j++) mask.data[i * seqLen + j] = (j <= i) ? 0f : Float.NEGATIVE_INFINITY;
+        return mask;
+    }
+}
+```
+
+```json
+// DOSYA 130: colab/train_on_colab.ipynb
+{
+ "cells": [
+  {"cell_type": "code", "source": ["!pip install torch transformers datasets tokenizers\n", "import torch, os, json, struct\n", "from datasets import load_dataset\n", "from tokenizers import ByteLevelBPETokenizer\n", "print('Eğitim ortamı hazır. GPU:', torch.cuda.is_available())"]},
+  {"cell_type": "code", "source": ["ds = load_dataset('wikimedia/wikipedia', '20231101.tr', split='train[:10000]')\n", "texts = [x['text'] for x in ds if len(x['text']) > 100]\n", "with open('corpus.txt', 'w', encoding='utf-8') as f:\n", "    for t in texts: f.write(t + '\\n')\n", "tokenizer = ByteLevelBPETokenizer()\n", "tokenizer.train(files=['corpus.txt'], vocab_size=16000, min_frequency=2, special_tokens=['<|bos|>','<|eos|>','<|pad|>','<|user|>','<|assistant|>','<|system|>'])\n", "os.makedirs('tokenizer', exist_ok=True)\n", "tokenizer.save_model('tokenizer')\n", "print('Vocab boyutu:', tokenizer.get_vocab_size())"]},
+  {"cell_type": "code", "source": ["import torch.nn as nn\n", "class Block(nn.Module):\n", "    def __init__(self, dim, heads, ffn):\n", "        super().__init__()\n", "        self.ln1 = nn.LayerNorm(dim)\n", "        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)\n", "        self.ln2 = nn.LayerNorm(dim)\n", "        self.ffn = nn.Sequential(nn.Linear(dim, ffn), nn.GELU(), nn.Linear(ffn, dim))\n", "    def forward(self, x, mask):\n", "        a = self.ln1(x)\n", "        a, _ = self.attn(a, a, a, attn_mask=mask)\n", "        x = x + a\n", "        return x + self.ffn(self.ln2(x))\n", "\n", "class JaiModel(nn.Module):\n", "    def __init__(self, vocab=16000, dim=576, layers=10, heads=8, ffn=2304, max_seq=1024):\n", "        super().__init__()\n", "        self.tok = nn.Embedding(vocab, dim)\n", "        self.pos = nn.Embedding(max_seq, dim)\n", "        self.blocks = nn.ModuleList([Block(dim, heads, ffn) for _ in range(layers)])\n", "        self.ln = nn.LayerNorm(dim)\n", "        self.head = nn.Linear(dim, vocab, bias=False)\n", "        self.max_seq = max_seq\n", "    def forward(self, x):\n", "        seq_len = x.size(1)\n", "        pos = torch.arange(seq_len, device=x.device).unsqueeze(0)\n", "        x = self.tok(x) + self.pos(pos)\n", "        mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()\n", "        mask = mask.float().masked_fill(mask == 1, float('-inf'))\n", "        for b in self.blocks: x = b(x, mask)\n", "        return self.head(self.ln(x))\n", "model = JaiModel().cuda()\n", "print('Parametre:', sum(p.numel() for p in model.parameters()))"]},
+  {"cell_type": "code", "source": ["from torch.utils.data import Dataset, DataLoader\n", "class TxtDS(Dataset):\n", "    def __init__(self, path, seq=256):\n", "        with open(path, encoding='utf-8') as f: text = f.read()[:20_000_000]\n", "        self.ids = tokenizer.encode(text).ids\n", "        self.seq = seq\n", "    def __len__(self): return len(self.ids) // self.seq - 1\n", "    def __getitem__(self, i):\n", "        s = i * self.seq\n", "        return torch.tensor(self.ids[s:s+self.seq]), torch.tensor(self.ids[s+1:s+self.seq+1])\n", "ds = TxtDS('corpus.txt')\n", "dl = DataLoader(ds, batch_size=8, shuffle=True)\n", "opt = torch.optim.AdamW(model.parameters(), lr=3e-4)\n", "lossf = nn.CrossEntropyLoss()\n", "for epoch in range(3):\n", "    for step, (x, y) in enumerate(dl):\n", "        x, y = x.cuda(), y.cuda()\n", "        logits = model(x)\n", "        loss = lossf(logits.view(-1, logits.size(-1)), y.view(-1))\n", "        opt.zero_grad(); loss.backward(); opt.step()\n", "        if step % 50 == 0: print(f'epoch {epoch} step {step} loss {loss.item():.4f}')"]},
+  {"cell_type": "code", "source": ["def quantize(w):\n", "    mn, mx = w.min().item(), w.max().item()\n", "    scale = (mx - mn) / 255 if mx > mn else 1e-8\n", "    zp = int(round(-mn / scale))\n", "    zp = max(0, min(255, zp))\n", "    q = ((w / scale) + zp).round().clamp(0, 255).byte()\n", "    return q.numpy().tobytes(), scale, zp\n", "\n", "with open('model_int8.bin', 'wb') as f:\n", "    f.write(struct.pack('>3i', 16000, 576, 10))\n", "    sd = model.state_dict()\n", "    def write_w(mat):\n", "        b, s, z = quantize(mat.cpu())\n", "        f.write(struct.pack('>ii', mat.shape[0], mat.shape[1]))\n", "        f.write(struct.pack('>f', s))\n", "        f.write(struct.pack('>i', z))\n", "        f.write(b)\n", "    def write_f(arr):\n", "        f.write(struct.pack('>i', len(arr)))\n", "        for v in arr: f.write(struct.pack('>f', float(v)))\n", "    write_w(sd['tok.weight'])\n", "    write_w(sd['pos.weight'])\n", "    for i in range(10):\n", "        write_w(sd[f'blocks.{i}.attn.in_proj_weight'][:576])\n", "        write_w(sd[f'blocks.{i}.attn.in_proj_weight'][576:1152])\n", "        write_w(sd[f'blocks.{i}.attn.in_proj_weight'][1152:])\n", "        write_f(sd[f'blocks.{i}.attn.in_proj_bias'][:576].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.attn.in_proj_bias'][576:1152].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.attn.in_proj_bias'][1152:].cpu().numpy())\n", "        write_w(sd[f'blocks.{i}.attn.out_proj.weight'])\n", "        write_f(sd[f'blocks.{i}.attn.out_proj.bias'].cpu().numpy())\n", "        write_w(sd[f'blocks.{i}.ffn.0.weight'])\n", "        write_f(sd[f'blocks.{i}.ffn.0.bias'].cpu().numpy())\n", "        write_w(sd[f'blocks.{i}.ffn.2.weight'])\n", "        write_f(sd[f'blocks.{i}.ffn.2.bias'].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.ln1.weight'].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.ln1.bias'].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.ln2.weight'].cpu().numpy())\n", "        write_f(sd[f'blocks.{i}.ln2.bias'].cpu().numpy())\n", "    write_w(sd['head.weight'])\n", "    write_f(sd['ln.weight'].cpu().numpy())\n", "    write_f(sd['ln.bias'].cpu().numpy())\n", "print('model_int8.bin boyut:', os.path.getsize('model_int8.bin') / 1e6, 'MB')"]}
+ ],
+ "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"}},
+ "nbformat": 4, "nbformat_minor": 5
+}
+```
+
+```xml
+// DOSYA 131: server/pom.xml
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.jai</groupId>
+    <artifactId>server</artifactId>
+    <version>1.0</version>
+    <dependencies>
+        <dependency><groupId>org.java-websocket</groupId><artifactId>Java-WebSocket</artifactId><version>1.5.4</version></dependency>
+        <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>3.44.0.0</version></dependency>
+        <dependency><groupId>org.json</groupId><artifactId>json</artifactId><version>20231013</version></dependency>
+    </dependencies>
+</project>
+```
+
+```java
+// DOSYA 132: server/src/main/java/com/jai/server/MessagingServer.java
+package com.jai.server;
+import org.java_websocket.WebSocket; import org.java_websocket.handshake.ClientHandshake; import org.java_websocket.server.WebSocketServer;
+import java.net.InetSocketAddress; import java.util.Map; import java.util.concurrent.ConcurrentHashMap;
+public class MessagingServer extends WebSocketServer {
+    private final Map<String, WebSocket> online = new ConcurrentHashMap<>();
+    public MessagingServer(int port) { super(new InetSocketAddress(port)); }
+    @Override public void onOpen(WebSocket c, ClientHandshake h) { String q = h.getResourceDescriptor(); int i = q.indexOf("user="); if (i >= 0) online.put(q.substring(i + 5), c); }
+    @Override public void onClose(WebSocket c, int code, String reason, boolean remote) { online.values().remove(c); }
+    @Override public void onMessage(WebSocket c, String msg) {
+        try {
+            org.json.JSONObject j = new org.json.JSONObject(msg);
+            if (j.has("to")) { WebSocket t = online.get(j.getString("to")); if (t != null && t.isOpen()) t.send(msg); }
+        } catch (Exception ignored) {}
+    }
+    @Override public void onError(WebSocket c, Exception ex) {}
+    @Override public void onStart() {}
+    public static void main(String[] a) { new MessagingServer(8887).start(); }
+}
+```
+
+```java
+// DOSYA 133: server/src/main/java/com/jai/server/UserStore.java
+package com.jai.server;
+import java.sql.*;
+public class UserStore { public UserStore(String path) throws Exception { DriverManager.getConnection("jdbc:sqlite:" + path).createStatement().execute("CREATE TABLE IF NOT EXISTS users (code TEXT PRIMARY KEY)"); } }
+```
+
+```java
+// DOSYA 134: server/src/main/java/com/jai/server/MessageStore.java
+package com.jai.server;
+import java.sql.*;
+public class MessageStore { public MessageStore(String path) throws Exception { DriverManager.getConnection("jdbc:sqlite:" + path).createStatement().execute("CREATE TABLE IF NOT EXISTS msgs (id INTEGER PRIMARY KEY, body TEXT)"); } }
+```
+
+```markdown
+// DOSYA 135: server/README.md
+# Ja.i Sunucusu
+WebSocket sunucusunu başlatmak için MessagingServer sınıfını çalıştırın. Port 8887.
+```
+
+```xml
+// DOSYA 136: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/jai_bg"/>
+    <foreground android:drawable="@drawable/ic_launcher"/>
+</adaptive-icon>
+```
+
+```xml
+// DOSYA 137: app/src/main/res/values/dimens.xml
+<resources>
+    <dimen name="pad">16dp</dimen>
+</resources>
+```
+
+```xml
+// DOSYA 138: app/src/main/res/values/styles.xml
+<resources>
+    <style name="AppTheme" parent="Theme.Jai"/>
+</resources>
+```
+
+```xml
+// DOSYA 139: app/src/main/res/xml/shortcuts.xml
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" />
+```
+
+```xml
+// DOSYA 140: app/src/main/res/layout/item_video.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content">
+    <TextView android:id="@+id/txtName" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 141: app/src/main/res/layout/item_image.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content">
+    <ImageView android:id="@+id/imgThumb" android:layout_width="match_parent" android:layout_height="150dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 142: app/src/main/res/layout/item_learning.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="12dp">
+    <TextView android:id="@+id/txtTopic" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+</LinearLayout>
+```
+
+```java
+// DOSYA 143: app/src/test/java/com/jai/app/ExampleUnitTest.java
+package com.jai.app;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class ExampleUnitTest {
+    @Test public void addition_isCorrect() { assertEquals(4, 2 + 2); }
+}
+```
+
+```java
+// DOSYA 144: app/src/test/java/com/jai/app/ExpressionTest.java
+package com.jai.app;
+import com.jai.app.brain.ExpressionEvaluator;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class ExpressionTest {
+    @Test public void testEval() { assertEquals(84.0, ExpressionEvaluator.eval("12*(3+4)"), 0.01); }
+}
+```
+
+```java
+// DOSYA 145: app/src/main/java/com/jai/app/model/image/Conv2D.java
+package com.jai.app.model.image;
+import com.jai.app.model.Matrix;
+public class Conv2D {
+    public final int inChannels, outChannels, kernelSize, stride;
+    public float[][][][] weights; public float[] bias;
+    public Conv2D(int inChannels, int outChannels, int kernelSize, int stride) {
+        this.inChannels = inChannels; this.outChannels = outChannels; this.kernelSize = kernelSize; this.stride = stride;
+        this.weights = new float[outChannels][inChannels][kernelSize][kernelSize]; this.bias = new float[outChannels];
+        java.util.Random r = new java.util.Random(42); float std = (float) Math.sqrt(2.0 / (inChannels * kernelSize * kernelSize));
+        for (int oc = 0; oc < outChannels; oc++) for (int ic = 0; ic < inChannels; ic++) for (int ky = 0; ky < kernelSize; ky++) for (int kx = 0; kx < kernelSize; kx++) weights[oc][ic][ky][kx] = (float) (r.nextGaussian() * std);
+    }
+    public Matrix forward(Matrix input, int w, int h) {
+        int outW = (w - kernelSize) / stride + 1; int outH = (h - kernelSize) / stride + 1;
+        Matrix output = new Matrix(outW * outH, outChannels);
+        for (int oc = 0; oc < outChannels; oc++) {
+            for (int oy = 0; oy < outH; oy++) {
+                for (int ox = 0; ox < outW; ox++) {
+                    float sum = bias[oc];
+                    for (int ic = 0; ic < inChannels; ic++) {
+                        for (int ky = 0; ky < kernelSize; ky++) {
+                            for (int kx = 0; kx < kernelSize; kx++) {
+                                int iy = oy * stride + ky; int ix = ox * stride + kx;
+                                if (iy < h && ix < w) { int inIdx = iy * w + ix; sum += input.data[inIdx * inChannels + ic] * weights[oc][ic][ky][kx]; }
+                            }
+                        }
+                    }
+                    output.data[(oy * outW + ox) * outChannels + oc] = sum;
+                }
+            }
+        }
+        return output;
+    }
+}
+```
+
+```java
+// DOSYA 146: app/src/main/java/com/jai/app/model/image/UNetBlock.java
+package com.jai.app.model.image;
+import com.jai.app.model.Matrix;
+public class UNetBlock {
+    public final Conv2D conv1, conv2;
+    public UNetBlock(int inCh, int outCh) { this.conv1 = new Conv2D(inCh, outCh, 3, 1); this.conv2 = new Conv2D(outCh, outCh, 3, 1); }
+    public Matrix forward(Matrix x, int w, int h) {
+        Matrix c1 = conv1.forward(x, w, h); for (int i = 0; i < c1.data.length; i++) c1.data[i] = Math.max(0, c1.data[i]);
+        Matrix c2 = conv2.forward(c1, w - 2, h - 2); for (int i = 0; i < c2.data.length; i++) c2.data[i] = Math.max(0, c2.data[i]);
+        return c2;
+    }
+}
+```
+
+```java
+// DOSYA 147: app/src/main/java/com/jai/app/model/image/ImageModel.java
+package com.jai.app.model.image;
+import com.jai.app.model.Matrix;
+public class ImageModel {
+    public final UNetBlock down1, down2; public final Conv2D outConv;
+    public ImageModel() { this.down1 = new UNetBlock(3, 16); this.down2 = new UNetBlock(16, 32); this.outConv = new Conv2D(32, 3, 1, 1); }
+    public Matrix forward(Matrix input, int w, int h) {
+        Matrix d1 = down1.forward(input, w, h); Matrix d2 = down2.forward(d1, w - 4, h - 4); return outConv.forward(d2, w - 8, h - 8);
+    }
+}
+```
+
+```java
+// DOSYA 148: app/src/main/java/com/jai/app/trainer/TransformerBackprop.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix; import com.jai.app.model.TransformerModel;
+public class TransformerBackprop { public static void backward(TransformerModel model, Matrix lossGrad, int[] inputIds) { throw new UnsupportedOperationException("Eğitim (Backprop) Android Java içinde desteklenmiyor. Lütfen Colab/PyTorch kullanın."); } }
+```
+
+```java
+// DOSYA 149: app/src/main/java/com/jai/app/JaiApp.java
+package com.jai.app;
+import android.app.Application; import com.jai.app.model.InferenceRuntime; import com.jai.app.notify.NotificationHelper; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class JaiApp extends Application {
+    private static JaiApp instance; private InferenceRuntime runtime; private final ExecutorService initExecutor = Executors.newSingleThreadExecutor();
+    @Override public void onCreate() { super.onCreate(); instance = this; NotificationHelper.init(this); runtime = new InferenceRuntime(); initExecutor.execute(() -> runtime.init(getApplicationContext())); }
+    public static JaiApp get() { return instance; } public InferenceRuntime runtime() { return runtime; }
+}
+```
+
+```json
+// DOSYA 150: colab/train_image_model.ipynb
+{
+ "cells": [
+  {"cell_type": "code", "source": ["!pip install torch torchvision\n", "import torch, torch.nn as nn, torch.optim as optim\n", "from torchvision import datasets, transforms\n", "from torch.utils.data import DataLoader\n", "print('CUDA:', torch.cuda.is_available())"]},
+  {"cell_type": "code", "source": ["transform = transforms.Compose([transforms.Resize(64), transforms.ToTensor()])\n", "dataset = datasets.CIFAR10(root='./data', download=True, transform=transform)\n", "dataloader = DataLoader(dataset, batch_size=32, shuffle=True)\n", "class SmallUNet(nn.Module):\n", "    def __init__(self):\n", "        super().__init__()\n", "        self.enc1 = nn.Conv2d(3, 16, 3, padding=1)\n", "        self.enc2 = nn.Conv2d(16, 32, 3, padding=1)\n", "        self.dec1 = nn.Conv2d(32, 16, 3, padding=1)\n", "        self.dec2 = nn.Conv2d(16, 3, 3, padding=1)\n", "    def forward(self, x):\n", "        x = torch.relu(self.enc1(x))\n", "        x = torch.relu(self.enc2(x))\n", "        x = torch.relu(self.dec1(x))\n", "        return torch.sigmoid(self.dec2(x))\n", "model = SmallUNet().cuda()\n", "opt = optim.Adam(model.parameters(), lr=0.001)\n", "loss_fn = nn.MSELoss()\n", "for epoch in range(3):\n", "    for step, (imgs, _) in enumerate(dataloader):\n", "        imgs = imgs.cuda()\n", "        out = model(imgs)\n", "        loss = loss_fn(out, imgs)\n", "        opt.zero_grad(); loss.backward(); opt.step()\n", "        if step % 100 == 0: print(f'Epoch {epoch}, Step {step}, Loss {loss.item():.4f}')"]},
+  {"cell_type": "code", "source": ["import struct\n", "def q(w):\n", "    mn, mx = w.min().item(), w.max().item()\n", "    s = (mx - mn) / 255 if mx > mn else 1e-8\n", "    z = max(0, min(255, int(round(-mn / s))))\n", "    b = ((w / s) + z).round().clamp(0, 255).byte().numpy().tobytes()\n", "    return b, s, z\n", "with open('image_model_int8.bin', 'wb') as f:\n", "    sd = model.state_dict()\n", "    for name in ['enc1.weight', 'enc2.weight', 'dec1.weight', 'dec2.weight']:\n", "        mat = sd[name].cpu()\n", "        b, s, z = q(mat)\n", "        f.write(struct.pack('>ii', mat.shape[0], mat.shape[1]))\n", "        f.write(struct.pack('>f', s))\n", "        f.write(struct.pack('>i', z))\n", "        f.write(b)\n", "print('image_model_int8.bin boyut:', os.path.getsize('image_model_int8.bin') / 1e6, 'MB')"]}
+ ], "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"}}, "nbformat": 4, "nbformat_minor": 5
+}
+```
+
+```java
+// DOSYA 151: app/src/main/java/com/jai/app/image/GenerativeImageEngine.java
+package com.jai.app.image;
+import android.content.Context; import android.graphics.Bitmap; import android.graphics.Color;
+import com.jai.app.model.image.ImageModel; import com.jai.app.model.Matrix; import com.jai.app.trainer.PtqImageReader; import java.io.InputStream;
+public class GenerativeImageEngine {
+    private ImageModel model; private Context ctx;
+    public GenerativeImageEngine(Context ctx) { this.ctx = ctx; this.model = null; try (InputStream in = ctx.getAssets().open("image_model_int8.bin")) { this.model = PtqImageReader.read(in); } catch (Exception ignored) {} }
+    public Bitmap generate(String prompt) {
+        if (model == null) return new WebImageEngine(ctx).generate(prompt);
+        int size = 64; Matrix input = new Matrix(size * size, 3); java.util.Random r = new java.util.Random(prompt.hashCode());
+        for (int i = 0; i < input.data.length; i++) input.data[i] = r.nextFloat();
+        Matrix out = model.forward(input, size, size); Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); int[] pixels = new int[size * size];
+        for (int i = 0; i < pixels.length && i * 3 + 2 < out.data.length; i++) {
+            int rCol = Math.max(0, Math.min(255, (int)(out.data[i*3] * 255))); int gCol = Math.max(0, Math.min(255, (int)(out.data[i*3+1] * 255))); int bCol = Math.max(0, Math.min(255, (int)(out.data[i*3+2] * 255)));
+            pixels[i] = Color.rgb(rCol, gCol, bCol);
+        }
+        bmp.setPixels(pixels, 0, size, 0, 0, size, size); return Bitmap.createScaledBitmap(bmp, 512, 512, false);
+    }
+}
+```
+
+```java
+// DOSYA 152: app/src/main/java/com/jai/app/ui/ImageGenerateActivity.java
+package com.jai.app.ui;
+import android.graphics.Bitmap; import android.os.Bundle; import android.widget.EditText; import android.widget.ImageView;
+import androidx.appcompat.app.AppCompatActivity; import com.jai.app.R; import com.jai.app.image.GenerativeImageEngine; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class ImageGenerateActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image);
+        EditText p = findViewById(R.id.inputPrompt); ImageView img = findViewById(R.id.imagePreview);
+        findViewById(R.id.btnGenerate).setOnClickListener(v -> {
+            String prompt = p.getText().toString().trim(); if(prompt.isEmpty()) return;
+            img.setImageBitmap(null);
+            io.execute(() -> {
+                GenerativeImageEngine engine = new GenerativeImageEngine(this); Bitmap result = engine.generate(prompt);
+                runOnUiThread(() -> img.setImageBitmap(result));
+            });
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 153: app/src/main/java/com/jai/app/learning/LearningVerifier.java
+package com.jai.app.learning;
+import com.jai.app.data.KnowledgeEntity;
+public class LearningVerifier {
+    public boolean conflicts(KnowledgeEntity existing, String newContent) {
+        if (existing == null || newContent == null) return false;
+        String a = existing.content.toLowerCase().replaceAll("[^a-z0-9ğüşıöç ]", "");
+        String b = newContent.toLowerCase().replaceAll("[^a-z0-9ğüşıöç ]", "");
+        String[] wordsA = a.split("\\s+"); String[] wordsB = b.split("\\s+");
+        if (wordsA.length < 3 || wordsB.length < 3) return false;
+        int common = 0; for (String wa : wordsA) for (String wb : wordsB) if (wa.equals(wb) && wa.length() > 3) { common++; break; }
+        return common > 2 && (b.contains("değil") || b.contains("yanlış"));
+    }
+}
+```
+
+```java
+// DOSYA 154: app/src/main/java/com/jai/app/trainer/PtqImageReader.java
+package com.jai.app.trainer;
+import com.jai.app.model.image.Conv2D; import com.jai.app.model.image.ImageModel; import java.io.DataInputStream; import java.io.InputStream;
+public class PtqImageReader {
+    public static ImageModel read(InputStream in) throws Exception {
+        DataInputStream din = new DataInputStream(in); ImageModel m = new ImageModel();
+        readConv(din, m.down1.conv1); readConv(din, m.down1.conv2); readConv(din, m.down2.conv1); readConv(din, m.down2.conv2); readConv(din, m.outConv); return m;
+    }
+    private static void readConv(DataInputStream din, Conv2D conv) throws Exception {
+        int outC = din.readInt(); int inC = din.readInt(); float scale = din.readFloat(); int zp = din.readInt();
+        for (int oc = 0; oc < outC; oc++) for (int ic = 0; ic < inC; ic++) for (int ky = 0; ky < conv.kernelSize; ky++) for (int kx = 0; kx < conv.kernelSize; kx++) {
+            int v = din.readByte() & 0xFF; conv.weights[oc][ic][ky][kx] = (v - zp) * scale;
+        }
+    }
+}
+```
+
+```java
+// DOSYA 155: app/src/main/java/com/jai/app/image/GenerativeImageEngine.java
+package com.jai.app.image;
+import android.content.Context; import android.graphics.Bitmap; import android.graphics.Color;
+import com.jai.app.model.image.ImageModel; import com.jai.app.model.Matrix; import com.jai.app.trainer.PtqImageReader; import java.io.InputStream;
+public class GenerativeImageEngine {
+    private ImageModel model; private Context ctx;
+    public GenerativeImageEngine(Context ctx) { this.ctx = ctx; this.model = null; try (InputStream in = ctx.getAssets().open("image_model_int8.bin")) { this.model = PtqImageReader.read(in); } catch (Exception ignored) {} }
+    public Bitmap generate(String prompt) {
+        if (model == null) return new WebImageEngine(ctx).generate(prompt);
+        int size = 64; Matrix input = new Matrix(size * size, 3); java.util.Random r = new java.util.Random(prompt.hashCode());
+        for (int i = 0; i < input.data.length; i++) input.data[i] = r.nextFloat();
+        Matrix out = model.forward(input, size, size); Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888); int[] pixels = new int[size * size];
+        for (int i = 0; i < pixels.length && i * 3 + 2 < out.data.length; i++) {
+            int rCol = Math.max(0, Math.min(255, (int)(out.data[i*3] * 255))); int gCol = Math.max(0, Math.min(255, (int)(out.data[i*3+1] * 255))); int bCol = Math.max(0, Math.min(255, (int)(out.data[i*3+2] * 255)));
+            pixels[i] = Color.rgb(rCol, gCol, bCol);
+        }
+        bmp.setPixels(pixels, 0, size, 0, 0, size, size); return Bitmap.createScaledBitmap(bmp, 512, 512, false);
+    }
+}
+```
+
+```java
+// DOSYA 156: app/src/main/java/com/jai/app/ui/SettingsActivity.java
+package com.jai.app.ui;
+import android.os.Bundle; import android.widget.EditText; import android.widget.Toast; import androidx.appcompat.app.AppCompatActivity; import com.jai.app.R;
+public class SettingsActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_settings);
+        EditText urlInput = findViewById(R.id.inputServerUrl);
+        String saved = getSharedPreferences("jai_prefs", MODE_PRIVATE).getString("server_url", "ws://10.0.2.2:8887"); urlInput.setText(saved);
+        findViewById(R.id.btnSave).setOnClickListener(v -> {
+            getSharedPreferences("jai_prefs", MODE_PRIVATE).edit().putString("server_url", urlInput.getText().toString()).apply();
+            Toast.makeText(this, "Kaydedildi", Toast.LENGTH_SHORT).show(); finish();
+        });
+    }
+}
+```
+
+```java
+// DOSYA 157: app/src/main/java/com/jai/app/messaging/MessagingClient.java
+package com.jai.app.messaging;
+import androidx.annotation.NonNull; import androidx.annotation.Nullable; import okhttp3.*; import java.util.concurrent.TimeUnit;
+public class MessagingClient {
+    public interface Listener { void onState(MessagingState state, String detail); void onMessage(String json); }
+    private WebSocket ws; private final OkHttpClient client = new OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build();
+    private MessagingState state = MessagingState.DISCONNECTED; private Listener listener;
+    public void setListener(Listener l) { this.listener = l; }
+    public void connect(String url, String user) {
+        if (state == MessagingState.CONNECTED) return; state = MessagingState.CONNECTING; if (listener != null) listener.onState(state, "Bağlanıyor...");
+        ws = client.newWebSocket(new Request.Builder().url(url + "?user=" + user).build(), new WebSocketListener() {
+            @Override public void onOpen(@NonNull WebSocket w, @NonNull Response r) { state = MessagingState.CONNECTED; if (listener != null) listener.onState(state, "Bağlandı"); }
+            @Override public void onMessage(@NonNull WebSocket w, @NonNull String text) { if (listener != null) listener.onMessage(text); }
+            @Override public void onFailure(@NonNull WebSocket w, @NonNull Throwable t, @Nullable Response r) { state = MessagingState.ERROR; if (listener != null) listener.onState(state, "Hata: " + t.getMessage()); }
+            @Override public void onClosed(@NonNull WebSocket w, int code, @NonNull String reason) { state = MessagingState.DISCONNECTED; if (listener != null) listener.onState(state, "Kapandı"); }
+        });
+    }
+    public void send(String json) { if (ws != null && state == MessagingState.CONNECTED) ws.send(json); }
+    public void close() { if (ws != null) { ws.close(1000, "Bye"); ws = null; } state = MessagingState.DISCONNECTED; }
+}
+```
+
+```java
+// DOSYA 158: app/src/main/java/com/jai/app/trainer/PtqReader.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix; import com.jai.app.model.TransformerModel; import java.io.DataInputStream; import java.io.InputStream;
+public class PtqReader {
+    public static TransformerModel read(InputStream in) throws Exception {
+        DataInputStream din = new DataInputStream(in); int vocab = din.readInt(); int dim = din.readInt(); int layers = din.readInt();
+        TransformerModel m = new TransformerModel(vocab, dim, layers, 8, 2304, 1024);
+        readMatrix(din, m.tokenEmb.W); readMatrix(din, m.posEmb.W);
+        for (var b : m.blocks) {
+            readMatrix(din, b.attn.qProj.W); readMatrix(din, b.attn.kProj.W); readMatrix(din, b.attn.vProj.W); readMatrix(din, b.attn.oProj.W);
+            readMatrix(din, b.ffn.fc1.W); readMatrix(din, b.ffn.fc2.W);
+        }
+        readMatrix(din, m.lmHead.W); return m;
+    }
+    private static void readMatrix(DataInputStream din, Matrix target) throws Exception {
+        int rows = din.readInt(); int cols = din.readInt(); float scale = din.readFloat(); int zp = din.readInt();
+        byte[] data = new byte[rows * cols]; din.readFully(data);
+        for (int i = 0; i < data.length; i++) target.data[i] = ((data[i] & 0xFF) - zp) * scale;
+    }
+}
+```
+
+```java
+// DOSYA 159: app/src/main/java/com/jai/app/model/TransformerModel.java
+package com.jai.app.model;
+public class TransformerModel {
+    public final int vocabSize, dim, numLayers, numHeads, ffnHidden, maxSeq;
+    public final Embedding tokenEmb, posEmb; public final TransformerBlock[] blocks; public final LayerNorm finalNorm; public final Dense lmHead;
+    public TransformerModel(int vocabSize, int dim, int numLayers, int numHeads, int ffnHidden, int maxSeq) {
+        this.vocabSize = vocabSize; this.dim = dim; this.numLayers = numLayers; this.numHeads = numHeads; this.ffnHidden = ffnHidden; this.maxSeq = maxSeq;
+        this.tokenEmb = new Embedding(vocabSize, dim); this.posEmb = new Embedding(maxSeq, dim);
+        this.blocks = new TransformerBlock[numLayers];
+        for (int i = 0; i < numLayers; i++) blocks[i] = new TransformerBlock(dim, numHeads, ffnHidden);
+        this.finalNorm = new LayerNorm(dim); this.lmHead = new Dense(dim, vocabSize);
+    }
+    public Matrix forward(int[] tokenIds) {
+        int seq = Math.min(tokenIds.length, maxSeq); Matrix X = tokenEmb.forward(tokenIds);
+        int[] positions = new int[seq]; for (int i = 0; i < seq; i++) positions[i] = i;
+        X = X.add(posEmb.forward(positions));
+        for (TransformerBlock b : blocks) X = b.forward(X);
+        X = finalNorm.forward(X); return lmHead.forward(X);
+    }
+}
+```
+
+```java
+// DOSYA 160: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+import android.content.Intent; import android.os.Bundle; import android.os.Handler; import android.os.Looper; import android.widget.EditText; import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp; import com.jai.app.R; import com.jai.app.brain.BrainEngine; import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation; import com.jai.app.data.Message; import com.jai.app.memory.RagEngine; import com.jai.app.tools.ToolRegistry;
+import java.util.List; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor(); private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv; private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this); brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db)); tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter(); rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState);
+        io.execute(() -> {
+            while (JaiApp.get().runtime().getState().equals("LOADING")) { try { Thread.sleep(500); } catch (Exception ignored) {} }
+            ui.post(() -> state.setText(JaiApp.get().runtime().getState()));
+        });
+        EditText input = findViewById(R.id.input);
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id); ui.post(() -> adapter.setItems(msgs));
+        });
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10)); res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", ""); res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Görsel Galerisi", "Video Üretimi", "Video Galerisi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, ImageGalleryActivity.class));
+                else if (w == 3) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 4) startActivity(new Intent(this, VideoGalleryActivity.class));
+                else if (w == 5) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 6) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 161: app/src/main/java/com/jai/app/util/PermissionHelper.java
+package com.jai.app.util;
+import android.Manifest; import android.app.Activity; import android.content.pm.PackageManager; import androidx.core.app.ActivityCompat; import androidx.core.content.ContextCompat;
+public class PermissionHelper {
+    public static final int REQ_RECORD_AUDIO = 101;
+    public static boolean hasAudioPermission(Activity activity) { return ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED; }
+    public static void requestAudioPermission(Activity activity) { ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_AUDIO); }
+}
+```
+
+```java
+// DOSYA 162: app/src/main/java/com/jai/app/util/FileUtils.java
+package com.jai.app.util;
+import android.content.Context; import java.io.File; import java.io.FileOutputStream; import java.io.InputStream;
+public class FileUtils {
+    public static File copyToFilesDir(Context ctx, InputStream is, String filename) throws Exception {
+        File outFile = new File(ctx.getFilesDir(), filename);
+        try (FileOutputStream fos = new FileOutputStream(outFile)) { byte[] buffer = new byte[8192]; int read; while ((read = is.read(buffer)) != -1) fos.write(buffer, 0, read); }
+        return outFile;
+    }
+    public static long getDirSize(File dir) { long size = 0; if (dir != null && dir.isDirectory()) for (File f : dir.listFiles()) size += f.isFile() ? f.length() : getDirSize(f); return size; }
+}
+```
+
+```java
+// DOSYA 163: app/src/main/java/com/jai/app/ui/ImageAdapter.java
+package com.jai.app.ui;
+import android.graphics.BitmapFactory; import android.view.LayoutInflater; import android.view.View; import android.view.ViewGroup; import android.widget.ImageView;
+import androidx.annotation.NonNull; import androidx.recyclerview.widget.RecyclerView; import com.jai.app.R; import java.io.File; import java.util.List;
+public class ImageAdapter extends RecyclerView.Adapter<ImageAdapter.VH> {
+    private final List<File> images; public ImageAdapter(List<File> images) { this.images = images; }
+    @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) { View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_image, parent, false); return new VH(v); }
+    @Override public void onBindViewHolder(@NonNull VH holder, int position) { File imgFile = images.get(position); if (imgFile.exists()) holder.img.setImageBitmap(BitmapFactory.decodeFile(imgFile.getAbsolutePath())); }
+    @Override public int getItemCount() { return images.size(); }
+    static class VH extends RecyclerView.ViewHolder { ImageView img; VH(@NonNull View itemView) { super(itemView); img = itemView.findViewById(R.id.imgThumb); } }
+}
+```
+
+```java
+// DOSYA 164: app/src/main/java/com/jai/app/ui/VideoAdapter.java
+package com.jai.app.ui;
+import android.view.LayoutInflater; import android.view.View; import android.view.ViewGroup; import android.widget.TextView;
+import androidx.annotation.NonNull; import androidx.recyclerview.widget.RecyclerView; import com.jai.app.R; import com.jai.app.data.VideoJobEntity; import java.util.List;
+public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.VH> {
+    private final List<VideoJobEntity> jobs; private final OnVideoClick listener;
+    public interface OnVideoClick { void onClick(VideoJobEntity job); }
+    public VideoAdapter(List<VideoJobEntity> jobs, OnVideoClick listener) { this.jobs = jobs; this.listener = listener; }
+    @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) { View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_video, parent, false); return new VH(v); }
+    @Override public void onBindViewHolder(@NonNull VH holder, int position) {
+        VideoJobEntity j = jobs.get(position); holder.name.setText(j.prompt.length() > 30 ? j.prompt.substring(0, 30) + "..." : j.prompt); holder.meta.setText(j.status + " | " + j.framesDone + "/" + j.framesTotal + " kare"); holder.itemView.setOnClickListener(v -> listener.onClick(j));
+    }
+    @Override public int getItemCount() { return jobs.size(); }
+    static class VH extends RecyclerView.ViewHolder { TextView name, meta; VH(@NonNull View v) { super(v); name = v.findViewById(R.id.txtName); meta = v.findViewById(R.id.txtMeta); } }
+}
+```
+
+```java
+// DOSYA 165: app/src/main/java/com/jai/app/ui/LearningAdapter.java
+package com.jai.app.ui;
+import android.view.LayoutInflater; import android.view.View; import android.view.ViewGroup; import android.widget.TextView;
+import androidx.annotation.NonNull; import androidx.recyclerview.widget.RecyclerView; import com.jai.app.R; import com.jai.app.data.LearningTaskEntity; import java.util.List;
+public class LearningAdapter extends RecyclerView.Adapter<LearningAdapter.VH> {
+    private final List<LearningTaskEntity> tasks; public LearningAdapter(List<LearningTaskEntity> tasks) { this.tasks = tasks; }
+    @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) { View v = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_learning, parent, false); return new VH(v); }
+    @Override public void onBindViewHolder(@NonNull VH holder, int position) { LearningTaskEntity t = tasks.get(position); holder.topic.setText(t.topic); holder.status.setText(t.status); }
+    @Override public int getItemCount() { return tasks.size(); }
+    static class VH extends RecyclerView.ViewHolder { TextView topic, status; VH(@NonNull View v) { super(v); topic = v.findViewById(R.id.txtTopic); status = v.findViewById(R.id.txtStatus); } }
+}
+```
+
+```java
+// DOSYA 166: app/src/main/java/com/jai/app/ui/ImageGalleryActivity.java
+package com.jai.app.ui;
+import android.os.Bundle; import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.GridLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R; import java.io.File; import java.util.ArrayList; import java.util.List;
+public class ImageGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image_gallery);
+        RecyclerView rv = findViewById(R.id.listImages); rv.setLayoutManager(new GridLayoutManager(this, 2));
+        File dir = new File(getFilesDir(), "outputs"); List<File> images = new ArrayList<>();
+        if (dir.exists() && dir.listFiles() != null) for (File f : dir.listFiles()) if (f.getName().endsWith(".png") || f.getName().endsWith(".jpg")) images.add(f);
+        rv.setAdapter(new ImageAdapter(images));
+    }
+}
+```
+
+```java
+// DOSYA 167: app/src/main/java/com/jai/app/ui/VideoGalleryActivity.java
+package com.jai.app.ui;
+import android.content.Intent; import android.os.Bundle; import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R; import com.jai.app.data.AppDatabase;
+public class VideoGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_video_gallery);
+        RecyclerView rv = findViewById(R.id.listVideos); rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(new VideoAdapter(AppDatabase.get(this).videoJobs().all(), job -> {
+            if (job.outputPath != null) { Intent i = new Intent(this, VideoPlayerActivity.class); i.putExtra("path", job.outputPath); startActivity(i); }
+        }));
+    }
+}
+```
+
+```java
+// DOSYA 168: app/src/main/java/com/jai/app/ui/LearningActivity.java
+package com.jai.app.ui;
+import android.os.Bundle; import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R; import com.jai.app.data.AppDatabase;
+public class LearningActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_learning);
+        RecyclerView rv = findViewById(R.id.listTasks); rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(new LearningAdapter(AppDatabase.get(this).learningTasks().all()));
+    }
+}
+```
+
+```java
+// DOSYA 169: app/src/main/java/com/jai/app/ui/VideoActivity.java
+package com.jai.app.ui;
+import android.os.Bundle; import android.widget.ArrayAdapter; import android.widget.EditText; import android.widget.Spinner; import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity; import androidx.work.OneTimeWorkRequest; import androidx.work.WorkManager;
+import com.jai.app.R; import com.jai.app.data.AppDatabase; import com.jai.app.data.VideoJobEntity; import com.jai.app.work.VideoWorker;
+public class VideoActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_video);
+        EditText p = findViewById(R.id.inputPrompt); Spinner dur = findViewById(R.id.spinnerDuration), qual = findViewById(R.id.spinnerQuality); TextView est = findViewById(R.id.txtEstimate);
+        dur.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"5 saniye", "30 saniye", "1 dakika", "5 dakika", "10 dakika"}));
+        qual.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"512p (Hızlı)", "1024p (Yüksek)"}));
+        findViewById(R.id.btnStartVideo).setOnClickListener(v -> {
+            int d = new int[]{5, 30, 60, 300, 600}[dur.getSelectedItemPosition()]; int q = qual.getSelectedItemPosition() == 1 ? 1024 : 512;
+            String prompt = p.getText().toString().trim(); if(prompt.isEmpty()) { p.setError("Açıklama girin"); return; }
+            VideoJobEntity j = new VideoJobEntity(prompt, d, q); AppDatabase.get(this).videoJobs().insert(j);
+            WorkManager.getInstance(this).enqueue(new OneTimeWorkRequest.Builder(VideoWorker.class).build()); finish();
+        });
+        dur.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, android.view.View view, int position, long id) {
+                int d = new int[]{5, 30, 60, 300, 600}[position]; int q = qual.getSelectedItemPosition() == 1 ? 1024 : 512;
+                float secs = d * 24 * (q == 1024 ? 1.5f : 0.4f); est.setText("Tahmini süre: " + (int)(secs/60) + " dakika");
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+    }
+}
+```
+
+```java
+// DOSYA 170: app/src/main/java/com/jai/app/ui/ImageGenerateActivity.java
+package com.jai.app.ui;
+import android.graphics.Bitmap; import android.os.Bundle; import android.widget.EditText; import android.widget.ImageView;
+import androidx.appcompat.app.AppCompatActivity; import com.jai.app.R; import com.jai.app.image.GenerativeImageEngine; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class ImageGenerateActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image);
+        EditText p = findViewById(R.id.inputPrompt); ImageView img = findViewById(R.id.imagePreview);
+        findViewById(R.id.btnGenerate).setOnClickListener(v -> {
+            String prompt = p.getText().toString().trim(); if(prompt.isEmpty()) return;
+            img.setImageBitmap(null);
+            io.execute(() -> {
+                GenerativeImageEngine engine = new GenerativeImageEngine(this); Bitmap result = engine.generate(prompt);
+                runOnUiThread(() -> img.setImageBitmap(result));
+            });
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 171: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+import android.content.Intent; import android.os.Bundle; import android.os.Handler; import android.os.Looper; import android.widget.EditText; import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp; import com.jai.app.R; import com.jai.app.brain.BrainEngine; import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation; import com.jai.app.data.Message; import com.jai.app.memory.RagEngine; import com.jai.app.tools.ToolRegistry;
+import java.util.List; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor(); private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv; private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this); brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db)); tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter(); rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState);
+        io.execute(() -> {
+            while (JaiApp.get().runtime().getState().equals("LOADING")) { try { Thread.sleep(500); } catch (Exception ignored) {} }
+            ui.post(() -> state.setText(JaiApp.get().runtime().getState()));
+        });
+        EditText input = findViewById(R.id.input);
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id); ui.post(() -> adapter.setItems(msgs));
+        });
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10)); res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", ""); res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Görsel Galerisi", "Video Üretimi", "Video Galerisi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, ImageGalleryActivity.class));
+                else if (w == 3) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 4) startActivity(new Intent(this, VideoGalleryActivity.class));
+                else if (w == 5) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 6) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 172: app/src/test/java/com/jai/app/MatrixTest.java
+package com.jai.app;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class MatrixTest {
+    @Test public void testSoftmax() { Matrix x = new Matrix(1, 3); x.data[0] = 1; x.data[1] = 2; x.data[2] = 3; Matrix y = Matrix.softmax(x); assertEquals(1.0f, y.data[0] + y.data[1] + y.data[2], 0.001f); }
+}
+```
+
+```java
+// DOSYA 173: app/src/test/java/com/jai/app/Int8TensorTest.java
+package com.jai.app;
+import com.jai.app.model.Int8Tensor; import com.jai.app.model.Matrix; import org.junit.Test; import static org.junit.Assert.*;
+public class Int8TensorTest {
+    @Test public void testQuant() { Matrix m = new Matrix(2, 2); m.data[0] = 1f; m.data[1] = 2f; Int8Tensor t = Int8Tensor.quantize(m); assertNotNull(t); }
+}
+```
+
+```java
+// DOSYA 174: app/src/test/java/com/jai/app/SamplerTest.java
+package com.jai.app;
+import com.jai.app.model.Sampler; import org.junit.Test; import static org.junit.Assert.*;
+public class SamplerTest { @Test public void testSample() { float[] l = {1f, 5f, 2f}; assertEquals(1, new Sampler().sample(l)); } }
+```
+
+```java
+// DOSYA 175: app/src/test/java/com/jai/app/CodeLabTest.java
+package com.jai.app;
+import com.jai.app.codelab.CodeLabEngine; import org.junit.Test; import static org.junit.Assert.*;
+public class CodeLabTest { @Test public void testJson() { assertTrue(new CodeLabEngine().analyze("{}", "json").ok); } }
+```
+
+```java
+// DOSYA 176: app/src/test/java/com/jai/app/DataTest.java
+package com.jai.app;
+import com.jai.app.data.Message; import org.junit.Test; import static org.junit.Assert.*;
+public class DataTest { @Test public void testMsg() { assertEquals("test", new Message(1,"user","test","F","M",false,"OK",null).content); } }
+```
+
+```java
+// DOSYA 177: app/src/main/java/com/jai/app/JaiApp.java
+package com.jai.app;
+import android.app.Application; import com.jai.app.model.InferenceRuntime; import com.jai.app.notify.NotificationHelper; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class JaiApp extends Application {
+    private static JaiApp instance; private InferenceRuntime runtime; private final ExecutorService initExecutor = Executors.newSingleThreadExecutor();
+    @Override public void onCreate() { super.onCreate(); instance = this; NotificationHelper.init(this); runtime = new InferenceRuntime(); initExecutor.execute(() -> runtime.init(getApplicationContext())); }
+    public static JaiApp get() { return instance; } public InferenceRuntime runtime() { return runtime; }
+}
+```
+
+```xml
+// DOSYA 178: app/src/main/res/layout/activity_image_gallery.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/listImages" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="8dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 179: app/src/main/res/layout/activity_video_gallery.xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/listVideos" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="8dp"/>
+</LinearLayout>
+```
+
+```java
+// DOSYA 180: app/src/main/java/com/jai/app/ui/ImageGalleryActivity.java
+package com.jai.app.ui;
+import android.os.Bundle; import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.GridLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R; import java.io.File; import java.util.ArrayList; import java.util.List;
+public class ImageGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image_gallery);
+        RecyclerView rv = findViewById(R.id.listImages); rv.setLayoutManager(new GridLayoutManager(this, 2));
+        File dir = new File(getFilesDir(), "outputs"); List<File> images = new ArrayList<>();
+        if (dir.exists() && dir.listFiles() != null) for (File f : dir.listFiles()) if (f.getName().endsWith(".png") || f.getName().endsWith(".jpg")) images.add(f);
+        rv.setAdapter(new ImageAdapter(images));
+    }
+}
+```
+
+```java
+// DOSYA 181: app/src/main/java/com/jai/app/ui/VideoGalleryActivity.java
+package com.jai.app.ui;
+import android.content.Intent; import android.os.Bundle; import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R; import com.jai.app.data.AppDatabase;
+public class VideoGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_video_gallery);
+        RecyclerView rv = findViewById(R.id.listVideos); rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(new VideoAdapter(AppDatabase.get(this).videoJobs().all(), job -> {
+            if (job.outputPath != null) { Intent i = new Intent(this, VideoPlayerActivity.class); i.putExtra("path", job.outputPath); startActivity(i); }
+        }));
+    }
+}
+```
+
+```xml
+// DOSYA 182: app/src/main/AndroidManifest.xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <application android:name=".JaiApp" android:allowBackup="false" android:icon="@drawable/ic_launcher" android:label="Ja.i" android:theme="@style/Theme.Jai">
+        <activity android:name=".ui.RegisterActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <activity android:name=".ui.MainActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoPlayerActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGenerateActivity" android:exported="false"/>
+        <activity android:name=".ui.LearningActivity" android:exported="false"/>
+        <activity android:name=".ui.AdminActivity" android:exported="false"/>
+        <activity android:name=".ui.SettingsActivity" android:exported="false"/>
+        <service android:name=".messaging.MessagingService" android:foregroundServiceType="dataSync"/>
+        <receiver android:name=".work.BootReceiver" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+        </receiver>
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
+        </provider>
+    </application>
+</manifest>
+```
+
+```java
+// DOSYA 183: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+import android.content.Intent; import android.os.Bundle; import android.os.Handler; import android.os.Looper; import android.widget.EditText; import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity; import androidx.recyclerview.widget.LinearLayoutManager; import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp; import com.jai.app.R; import com.jai.app.brain.BrainEngine; import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation; import com.jai.app.data.Message; import com.jai.app.memory.RagEngine; import com.jai.app.tools.ToolRegistry;
+import java.util.List; import java.util.concurrent.ExecutorService; import java.util.concurrent.Executors;
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor(); private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv; private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this); brain = new BrainEngine(JaiApp.get().runtime(), new RagEngine(db)); tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter(); rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState);
+        io.execute(() -> {
+            while (JaiApp.get().runtime().getState().equals("LOADING")) { try { Thread.sleep(500); } catch (Exception ignored) {} }
+            ui.post(() -> state.setText(JaiApp.get().runtime().getState()));
+        });
+        EditText input = findViewById(R.id.input);
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id); ui.post(() -> adapter.setItems(msgs));
+        });
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                BrainEngine.Result res = brain.respond(text, "FLASH", "MID", false, tools);
+                if (res.reply.startsWith("__NEEDS_LEARNING__")) {
+                    String topic = res.reply.replace("__NEEDS_LEARNING__", "");
+                    db.learningTasks().insert(new com.jai.app.data.LearningTaskEntity(topic, 10)); res.reply = "Öğrenme kuyruğuna eklendi: " + topic;
+                } else if (res.reply.startsWith("__NEEDS_IMAGE__")) {
+                    String prompt = res.reply.replace("__NEEDS_IMAGE__", ""); res.reply = "Görsel oluşturuluyor: " + prompt + ". Bu işlem için Görsel Üretim ekranını kullanın.";
+                }
+                Message nMsg = new Message(conv.id, "nova", res.reply, "FLASH", "MID", false, res.status, res.trace);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+        findViewById(R.id.btnMenu).setOnClickListener(v -> {
+            String[] items = {"Yeni Sohbet", "Görsel Üretimi", "Görsel Galerisi", "Video Üretimi", "Video Galerisi", "Öğrenme Merkezi", "Ayarlar"};
+            new androidx.appcompat.app.AlertDialog.Builder(this).setItems(items, (d, w) -> {
+                if (w == 1) startActivity(new Intent(this, ImageGenerateActivity.class));
+                else if (w == 2) startActivity(new Intent(this, ImageGalleryActivity.class));
+                else if (w == 3) startActivity(new Intent(this, VideoActivity.class));
+                else if (w == 4) startActivity(new Intent(this, VideoGalleryActivity.class));
+                else if (w == 5) startActivity(new Intent(this, LearningActivity.class));
+                else if (w == 6) startActivity(new Intent(this, SettingsActivity.class));
+            }).show();
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 184: app/src/main/java/com/jai/app/model/Matrix.java
+package com.jai.app.model;
+public class Matrix {
+    public final int rows, cols;
+    public final float[] data;
+    public Matrix(int r, int c) { this.rows = r; this.cols = c; this.data = new float[r * c]; }
+    public Matrix(int r, int c, float[] d) { this.rows = r; this.cols = c; this.data = d; }
+    public float get(int r, int c) { return data[r * cols + c]; }
+    public void set(int r, int c, float v) { data[r * cols + c] = v; }
+    public static Matrix mul(Matrix A, Matrix B) {
+        if (A.cols != B.rows) throw new IllegalArgumentException("Boyut uyumsuz");
+        Matrix C = new Matrix(A.rows, B.cols);
+        for (int i = 0; i < A.rows; i++) {
+            for (int k = 0; k < A.cols; k++) {
+                float a = A.data[i * A.cols + k];
+                if (a == 0) continue;
+                for (int j = 0; j < B.cols; j++) C.data[i * C.cols + j] += a * B.data[k * B.cols + j];
+            }
+        }
+        return C;
+    }
+    public Matrix transpose() {
+        Matrix T = new Matrix(cols, rows);
+        for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) T.data[c * rows + r] = data[r * cols + c];
+        return T;
+    }
+    public Matrix add(Matrix B) { Matrix C = new Matrix(rows, cols); for (int i = 0; i < data.length; i++) C.data[i] = data[i] + B.data[i]; return C; }
+    public static Matrix softmax(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float max = Float.NEGATIVE_INFINITY;
+            for (int j = 0; j < X.cols; j++) if (X.data[row + j] > max) max = X.data[row + j];
+            float sum = 0;
+            for (int j = 0; j < X.cols; j++) { float e = (float) Math.exp(X.data[row + j] - max); Y.data[row + j] = e; sum += e; }
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] /= sum;
+        }
+        return Y;
+    }
+    public static Matrix layerNorm(Matrix X, float[] gamma, float[] beta, float eps) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float mean = 0;
+            for (int j = 0; j < X.cols; j++) mean += X.data[row + j];
+            mean /= X.cols; float var = 0;
+            for (int j = 0; j < X.cols; j++) { float d = X.data[row + j] - mean; var += d * d; }
+            var /= X.cols; float inv = (float) (1.0 / Math.sqrt(var + eps));
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] = (X.data[row + j] - mean) * inv * gamma[j] + beta[j];
+        }
+        return Y;
+    }
+    public static Matrix gelu(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.data.length; i++) { float x = X.data[i]; Y.data[i] = 0.5f * x * (1f + (float) Math.tanh(0.7978845608f * (x + 0.044715f * x * x * x))); }
+        return Y;
+    }
+    public static Matrix relu(Matrix X) { Matrix Y = new Matrix(X.rows, X.cols); for (int i = 0; i < X.data.length; i++) Y.data[i] = Math.max(0, X.data[i]); return Y; }
+}
+```
+
+```java
+// DOSYA 185: app/src/main/java/com/jai/app/model/Int8Tensor.java
+package com.jai.app.model;
+public class Int8Tensor {
+    public final int rows, cols; public final byte[] data; public final float scale; public final int zeroPoint;
+    public Int8Tensor(int r, int c, byte[] d, float s, int zp) { rows = r; cols = c; data = d; scale = s; zeroPoint = zp; }
+    public Matrix dequantize() { Matrix m = new Matrix(rows, cols); for (int i = 0; i < data.length; i++) m.data[i] = ((data[i] & 0xFF) - zeroPoint) * scale; return m; }
+    public static Int8Tensor quantize(Matrix m) {
+        float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+        for (float v : m.data) { if (v < min) min = v; if (v > max) max = v; }
+        float scale = (max - min) / 255f; if (scale == 0) scale = 1e-8f;
+        int zp = Math.round(-min / scale); if (zp < 0) zp = 0; if (zp > 255) zp = 255;
+        byte[] q = new byte[m.data.length];
+        for (int i = 0; i < m.data.length; i++) { int v = Math.round(m.data[i] / scale) + zp; if (v < 0) v = 0; if (v > 255) v = 255; q[i] = (byte) v; }
+        return new Int8Tensor(m.rows, m.cols, q, scale, zp);
+    }
+}
+```
+
+```java
+// DOSYA 186: app/src/main/java/com/jai/app/model/LayerNorm.java
+package com.jai.app.model;
+public class LayerNorm { public final int dim; public float[] gamma, beta; public final float eps = 1e-5f; public LayerNorm(int dim) { this.dim = dim; this.gamma = new float[dim]; this.beta = new float[dim]; for (int i = 0; i < dim; i++) gamma[i] = 1f; } public Matrix forward(Matrix X) { return Matrix.layerNorm(X, gamma, beta, eps); } }
+```
+
+```java
+// DOSYA 187: app/src/main/java/com/jai/app/model/Dense.java
+package com.jai.app.model;
+public class Dense {
+    public final int inDim, outDim; public Matrix W; public float[] b;
+    public Dense(int inDim, int outDim) { this.inDim = inDim; this.outDim = outDim; this.W = new Matrix(outDim, inDim); this.b = new float[outDim]; }
+    public Matrix forward(Matrix X) { Matrix Y = Matrix.mul(X, W.transpose()); for (int i = 0; i < Y.rows; i++) for (int j = 0; j < outDim; j++) Y.data[i * outDim + j] += b[j]; return Y; }
+}
+```
+
+```java
+// DOSYA 188: app/src/main/java/com/jai/app/model/Embedding.java
+package com.jai.app.model;
+public class Embedding {
+    public final int vocabSize, dim; public Matrix W;
+    public Embedding(int vocabSize, int dim) { this.vocabSize = vocabSize; this.dim = dim; this.W = new Matrix(vocabSize, dim); java.util.Random r = new java.util.Random(42); for (int i = 0; i < W.data.length; i++) W.data[i] = (float) (r.nextGaussian() * 0.02); }
+    public Matrix forward(int[] tokenIds) { Matrix Y = new Matrix(tokenIds.length, dim); for (int i = 0; i < tokenIds.length; i++) { int id = tokenIds[i]; if (id < 0 || id >= vocabSize) id = 0; System.arraycopy(W.data, id * dim, Y.data, i * dim, dim); } return Y; }
+}
+```
+
+```java
+// DOSYA 189: app/src/main/java/com/jai/app/model/MultiHeadAttention.java
+package com.jai.app.model;
+public class MultiHeadAttention {
+    public final int dim, numHeads, headDim; public final Dense qProj, kProj, vProj, oProj;
+    public MultiHeadAttention(int dim, int numHeads) { this.dim = dim; this.numHeads = numHeads; this.headDim = dim / numHeads; this.qProj = new Dense(dim, dim); this.kProj = new Dense(dim, dim); this.vProj = new Dense(dim, dim); this.oProj = new Dense(dim, dim); }
+    public Matrix forward(Matrix X) {
+        int seq = X.rows; Matrix Q = qProj.forward(X); Matrix K = kProj.forward(X); Matrix V = vProj.forward(X);
+        float scale = (float) (1.0 / Math.sqrt(headDim)); Matrix out = new Matrix(seq, dim);
+        for (int h = 0; h < numHeads; h++) {
+            int off = h * headDim; Matrix scores = new Matrix(seq, seq);
+            for (int i = 0; i < seq; i++) {
+                for (int j = 0; j <= i; j++) { float s = 0; for (int d = 0; d < headDim; d++) s += Q.data[i * dim + off + d] * K.data[j * dim + off + d]; scores.data[i * seq + j] = s * scale; }
+                for (int j = i + 1; j < seq; j++) scores.data[i * seq + j] = Float.NEGATIVE_INFINITY;
+            }
+            Matrix attn = Matrix.softmax(scores);
+            for (int i = 0; i < seq; i++) { for (int d = 0; d < headDim; d++) { float s = 0; for (int j = 0; j <= i; j++) s += attn.data[i * seq + j] * V.data[j * dim + off + d]; out.data[i * dim + off + d] = s; } }
+        }
+        return oProj.forward(out);
+    }
+}
+```
+
+```java
+// DOSYA 190: app/src/main/java/com/jai/app/model/FeedForward.java
+package com.jai.app.model;
+public class FeedForward { public final Dense fc1, fc2; public FeedForward(int dim, int hidden) { this.fc1 = new Dense(dim, hidden); this.fc2 = new Dense(hidden, dim); } public Matrix forward(Matrix X) { return fc2.forward(Matrix.gelu(fc1.forward(X))); } }
+```
+
+```java
+// DOSYA 191: app/src/main/java/com/jai/app/model/TransformerBlock.java
+package com.jai.app.model;
+public class TransformerBlock {
+    public final LayerNorm ln1, ln2; public final MultiHeadAttention attn; public final FeedForward ffn;
+    public TransformerBlock(int dim, int heads, int ffnHidden) { this.ln1 = new LayerNorm(dim); this.attn = new MultiHeadAttention(dim, heads); this.ln2 = new LayerNorm(dim); this.ffn = new FeedForward(dim, ffnHidden); }
+    public Matrix forward(Matrix X) { Matrix a = ln1.forward(X); Matrix attnOut = attn.forward(a); Matrix x1 = X.add(attnOut); Matrix b = ln2.forward(x1); return x1.add(ffn.forward(b)); }
+}
+```
+
+```java
+// DOSYA 192: app/src/main/java/com/jai/app/model/TransformerModel.java
+package com.jai.app.model;
+public class TransformerModel {
+    public final int vocabSize, dim, numLayers, numHeads, ffnHidden, maxSeq;
+    public final Embedding tokenEmb, posEmb; public final TransformerBlock[] blocks; public final LayerNorm finalNorm; public final Dense lmHead;
+    public TransformerModel(int vocabSize, int dim, int numLayers, int numHeads, int ffnHidden, int maxSeq) {
+        this.vocabSize = vocabSize; this.dim = dim; this.numLayers = numLayers; this.numHeads = numHeads; this.ffnHidden = ffnHidden; this.maxSeq = maxSeq;
+        this.tokenEmb = new Embedding(vocabSize, dim); this.posEmb = new Embedding(maxSeq, dim);
+        this.blocks = new TransformerBlock[numLayers];
+        for (int i = 0; i < numLayers; i++) blocks[i] = new TransformerBlock(dim, numHeads, ffnHidden);
+        this.finalNorm = new LayerNorm(dim); this.lmHead = new Dense(dim, vocabSize);
+    }
+    public Matrix forward(int[] tokenIds) {
+        int seq = Math.min(tokenIds.length, maxSeq); Matrix X = tokenEmb.forward(tokenIds);
+        int[] positions = new int[seq]; for (int i = 0; i < seq; i++) positions[i] = i;
+        X = X.add(posEmb.forward(positions));
+        for (TransformerBlock b : blocks) X = b.forward(X);
+        X = finalNorm.forward(X); return lmHead.forward(X);
+    }
+}
+```
+
+```java
+// DOSYA 193: app/src/main/java/com/jai/app/model/BpeTokenizer.java
+package com.jai.app.model;
+import android.content.Context; import java.io.BufferedReader; import java.io.InputStreamReader; import java.util.ArrayList; import java.util.HashMap; import java.util.List; import java.util.Map; import org.json.JSONObject;
+public class BpeTokenizer {
+    private final Map<String, Integer> vocab = new HashMap<>(); private final Map<Integer, String> reverse = new HashMap<>(); private final List<String[]> merges = new ArrayList<>();
+    public BpeTokenizer(Context ctx) {
+        try {
+            BufferedReader vr = new BufferedReader(new InputStreamReader(ctx.getAssets().open("vocab.json"))); StringBuilder sb = new StringBuilder(); String line;
+            while ((line = vr.readLine()) != null) sb.append(line); JSONObject json = new JSONObject(sb.toString());
+            for (String key : json.keySet()) { int id = json.getInt(key); vocab.put(key, id); reverse.put(id, key); } vr.close();
+            BufferedReader mr = new BufferedReader(new InputStreamReader(ctx.getAssets().open("merges.txt"))); mr.readLine();
+            while ((line = mr.readLine()) != null) { if (line.trim().isEmpty()) continue; merges.add(line.split(" ")); } mr.close();
+        } catch (Exception e) { for (int i = 0; i < 256; i++) { String key = String.valueOf((char) i); vocab.put(key, i); reverse.put(i, key); } }
+    }
+    public int[] encode(String text) {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8); List<Integer> ids = new ArrayList<>();
+        for (byte b : bytes) { String key = String.valueOf((char) (b & 0xFF)); Integer id = vocab.get(key); ids.add(id != null ? id : 0); }
+        while (true) {
+            int bestIdx = -1, bestRank = Integer.MAX_VALUE;
+            for (int i = 0; i < ids.size() - 1; i++) {
+                String p1 = reverse.get(ids.get(i)), p2 = reverse.get(ids.get(i+1));
+                for (int rank = 0; rank < merges.size(); rank++) { if (merges.get(rank)[0].equals(p1) && merges.get(rank)[1].equals(p2)) { if (rank < bestRank) { bestRank = rank; bestIdx = i; } break; } }
+            }
+            if (bestIdx == -1) break; String merged = reverse.get(ids.get(bestIdx)) + reverse.get(ids.get(bestIdx + 1));
+            Integer mergedId = vocab.get(merged); if (mergedId == null) break; ids.set(bestIdx, mergedId); ids.remove(bestIdx + 1);
+        }
+        int[] out = new int[ids.size()]; for (int i = 0; i < ids.size(); i++) out[i] = ids.get(i); return out;
+    }
+    public String decode(int[] ids) { StringBuilder sb = new StringBuilder(); for (int id : ids) { String tok = reverse.get(id); if (tok != null) sb.append(tok); } return sb.toString(); }
+}
+```
+
+```java
+// DOSYA 194: app/src/main/java/com/jai/app/model/Sampler.java
+package com.jai.app.model;
+import java.util.Random;
+public class Sampler {
+    private final Random rng = new Random(); public float temperature = 0.8f; public int topK = 40;
+    public int sample(float[] logits) {
+        int k = Math.min(topK, logits.length); Integer[] indices = new Integer[logits.length];
+        for (int i = 0; i < logits.length; i++) indices[i] = i; java.util.Arrays.sort(indices, (a

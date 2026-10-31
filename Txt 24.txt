@@ -1,0 +1,534 @@
+Tek tek, en baştan sona tüm eksikleri kapatarak ilerliyoruz. Önceki adımlarda 1'den 255'e kadar tüm Java, XML ve Gradle dosyalarını verdik. Şimdi projenin fiziksel olarak derlenebilmesi ve çalışması için kalan son yapılandırma ve köprü dosyalarını veriyorum.
+
+```properties
+// DOSYA 256: gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+```
+
+```text
+// DOSYA 257: gradlew
+#!/bin/sh
+if [ -n "$JAVA_HOME" ] ; then
+    JAVACMD="$JAVA_HOME/bin/java"
+else
+    JAVACMD="java"
+fi
+exec "$JAVACMD" -classpath "$0" org.gradle.wrapper.GradleWrapperMain "$@"
+```
+
+```text
+// DOSYA 258: gradlew.bat
+@if "%DEBUG%"=="" @echo off
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+"%JAVA_HOME%\bin\java.exe" %DEFAULT_JVM_OPTS% -classpath "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain %*
+```
+
+```xml
+// DOSYA 259: app/src/main/res/values/strings.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ja.i</string>
+    <string name="send">Gönder</string>
+    <string name="attach">📎</string>
+    <string name="mic">🎤</string>
+    <string name="search_toggle">Ara</string>
+    <string name="admin_secret">⚙</string>
+    <string name="admin_password_hint">Şifre</string>
+    <string name="register_title">Kayıt</string>
+    <string name="register_name">İsim</string>
+    <string name="register_surname">Soyisim</string>
+    <string name="register_email">E-posta</string>
+    <string name="register_age">Yaş</string>
+    <string name="register_submit">Kayıt Ol</string>
+</resources>
+```
+
+```xml
+// DOSYA 260: app/src/main/res/layout/activity_video_player.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/jai_bg">
+    <VideoView
+        android:id="@+id/videoView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 261: app/src/main/res/layout/activity_image_gallery.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/listImages"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="8dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 262: app/src/main/res/layout/activity_video_gallery.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/jai_bg">
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/listVideos"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="8dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 263: app/src/main/res/layout/activity_learning.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/jai_bg"
+    android:padding="16dp">
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/listTasks"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 264: app/src/main/res/layout/activity_settings.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/jai_bg"
+    android:padding="16dp">
+    <EditText
+        android:id="@+id/inputServerUrl"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Sunucu URL (ws://...)"
+        android:textColor="@color/jai_text"
+        android:background="@drawable/bg_input"
+        android:padding="12dp"/>
+    <Button
+        android:id="@+id/btnSave"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="Kaydet"
+        android:backgroundTint="@color/jai_primary"
+        android:layout_marginTop="16dp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 265: app/src/main/res/layout/item_video.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@color/jai_surface"
+    android:layout_marginBottom="8dp">
+    <TextView
+        android:id="@+id/txtName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/jai_text"/>
+    <TextView
+        android:id="@+id/txtMeta"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/jai_text_dim"
+        android:textSize="12sp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 266: app/src/main/res/layout/item_image.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@color/jai_surface"
+    android:layout_marginBottom="8dp">
+    <ImageView
+        android:id="@+id/imgThumb"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:scaleType="centerCrop"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 267: app/src/main/res/layout/item_learning.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@color/jai_surface"
+    android:layout_marginBottom="8dp">
+    <TextView
+        android:id="@+id/txtTopic"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/jai_text"/>
+    <TextView
+        android:id="@+id/txtStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/jai_text_dim"
+        android:textSize="12sp"/>
+</LinearLayout>
+```
+
+```xml
+// DOSYA 268: app/src/main/res/xml/backup_rules.xml
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="database" path="jai.db"/>
+    <exclude domain="sharedpref" path="jai_auth.xml"/>
+</full-backup-content>
+```
+
+```xml
+// DOSYA 269: app/src/main/res/xml/file_paths.xml
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="outputs" path="outputs/"/>
+    <files-path name="video" path="outputs/video/"/>
+    <files-path name="image" path="outputs/image/"/>
+    <cache-path name="cache" path="."/>
+</paths>
+```
+
+```json
+// DOSYA 270: colab/train_image_model.ipynb
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "source": [
+    "!pip install torch torchvision\n",
+    "import torch, torch.nn as nn, torch.optim as optim\n",
+    "from torchvision import datasets, transforms\n",
+    "from torch.utils.data import DataLoader\n",
+    "print('CUDA:', torch.cuda.is_available())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "transform = transforms.Compose([transforms.Resize(64), transforms.ToTensor()])\n",
+    "dataset = datasets.CIFAR10(root='./data', download=True, transform=transform)\n",
+    "dataloader = DataLoader(dataset, batch_size=32, shuffle=True)\n",
+    "class SmallUNet(nn.Module):\n",
+    "    def __init__(self):\n",
+    "        super().__init__()\n",
+    "        self.enc1 = nn.Conv2d(3, 16, 3, padding=1)\n",
+    "        self.enc2 = nn.Conv2d(16, 32, 3, padding=1)\n",
+    "        self.dec1 = nn.Conv2d(32, 16, 3, padding=1)\n",
+    "        self.dec2 = nn.Conv2d(16, 3, 3, padding=1)\n",
+    "    def forward(self, x):\n",
+    "        x = torch.relu(self.enc1(x))\n",
+    "        x = torch.relu(self.enc2(x))\n",
+    "        x = torch.relu(self.dec1(x))\n",
+    "        return torch.sigmoid(self.dec2(x))\n",
+    "model = SmallUNet().cuda()\n",
+    "opt = optim.Adam(model.parameters(), lr=0.001)\n",
+    "loss_fn = nn.MSELoss()\n",
+    "for epoch in range(3):\n",
+    "    for step, (imgs, _) in enumerate(dataloader):\n",
+    "        imgs = imgs.cuda()\n",
+    "        out = model(imgs)\n",
+    "        loss = loss_fn(out, imgs)\n",
+    "        opt.zero_grad(); loss.backward(); opt.step()\n",
+    "        if step % 100 == 0: print(f'Epoch {epoch}, Step {step}, Loss {loss.item():.4f}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "source": [
+    "import struct\n",
+    "def q(w):\n",
+    "    mn, mx = w.min().item(), w.max().item()\n",
+    "    s = (mx - mn) / 255 if mx > mn else 1e-8\n",
+    "    z = max(0, min(255, int(round(-mn / s))))\n",
+    "    b = ((w / s) + z).round().clamp(0, 255).byte().numpy().tobytes()\n",
+    "    return b, s, z\n",
+    "with open('image_model_int8.bin', 'wb') as f:\n",
+    "    sd = model.state_dict()\n",
+    "    for name in ['enc1.weight', 'enc2.weight', 'dec1.weight', 'dec2.weight']:\n",
+    "        mat = sd[name].cpu()\n",
+    "        b, s, z = q(mat)\n",
+    "        f.write(struct.pack('>ii', mat.shape[0], mat.shape[1]))\n",
+    "        f.write(struct.pack('>f', s))\n",
+    "        f.write(struct.pack('>i', z))\n",
+    "        f.write(b)\n",
+    "print('image_model_int8.bin boyut:', os.path.getsize('image_model_int8.bin') / 1e6, 'MB')"
+   ]
+  }
+ ],
+ "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"}},
+ "nbformat": 4, "nbformat_minor": 5
+}
+```
+
+```xml
+// DOSYA 271: app/src/main/res/values/colors.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="jai_bg">#0E0B14</color>
+    <color name="jai_surface">#1A1520</color>
+    <color name="jai_surface_high">#241C2E</color>
+    <color name="jai_primary">#A475F6</color>
+    <color name="jai_primary_dark">#7C4DFF</color>
+    <color name="jai_accent">#00D9C0</color>
+    <color name="jai_text">#F2ECFF</color>
+    <color name="jai_text_dim">#9B92AB</color>
+    <color name="jai_error">#FF6B6B</color>
+    <color name="jai_success">#4CAF50</color>
+    <color name="jai_user_bubble">#2C1F3D</color>
+    <color name="jai_nova_bubble">#1C1526</color>
+</resources>
+```
+
+```xml
+// DOSYA 272: app/src/main/res/values/themes.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Jai" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">@color/jai_primary</item>
+        <item name="colorPrimaryVariant">@color/jai_primary_dark</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">@color/jai_accent</item>
+        <item name="android:colorBackground">@color/jai_bg</item>
+        <item name="android:windowBackground">@color/jai_bg</item>
+        <item name="android:statusBarColor">@color/jai_bg</item>
+        <item name="android:navigationBarColor">@color/jai_bg</item>
+        <item name="android:textColorPrimary">@color/jai_text</item>
+        <item name="android:textColorSecondary">@color/jai_text_dim</item>
+    </style>
+</resources>
+```
+
+```xml
+// DOSYA 273: app/src/main/AndroidManifest.xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <application
+        android:name=".JaiApp"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="Ja.i"
+        android:roundIcon="@drawable/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Jai">
+        <activity android:name=".ui.RegisterActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <activity android:name=".ui.MainActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoPlayerActivity" android:exported="false"/>
+        <activity android:name=".ui.VideoGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGalleryActivity" android:exported="false"/>
+        <activity android:name=".ui.ImageGenerateActivity" android:exported="false"/>
+        <activity android:name=".ui.LearningActivity" android:exported="false"/>
+        <activity android:name=".ui.AdminActivity" android:exported="false"/>
+        <activity android:name=".ui.SettingsActivity" android:exported="false"/>
+        <service android:name=".messaging.MessagingService" android:foregroundServiceType="dataSync"/>
+        <receiver android:name=".work.BootReceiver" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+        </receiver>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
+        </provider>
+    </application>
+</manifest>
+```
+
+```xml
+// DOSYA 274: app/src/main/res/values/dimens.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="pad">16dp</dimen>
+</resources>
+```
+
+```xml
+// DOSYA 275: app/src/main/res/values/styles.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.Jai"/>
+</resources>
+```
+
+```xml
+// DOSYA 276: app/src/main/res/xml/shortcuts.xml
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" />
+```
+
+```xml
+// DOSYA 277: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/jai_bg"/>
+    <foreground android:drawable="@drawable/ic_launcher"/>
+</adaptive-icon>
+```
+
+```groovy
+// DOSYA 278: app/build.gradle
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.jai.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.jai.app"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.work:work-runtime:2.9.0'
+    implementation 'androidx.room:room-runtime:2.6.1'
+    annotationProcessor 'androidx.room:room-compiler:2.6.1'
+    implementation 'org.jsoup:jsoup:1.17.2'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.json:json:20231013'
+}
+```
+
+```groovy
+// DOSYA 279: build.gradle
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+}
+```
+
+```properties
+// DOSYA 280: gradle.properties
+org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+android.enableJetifier=true
+```
+
+```groovy
+// DOSYA 281: settings.gradle
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "jai"
+include ':app'
+```
+
+```yaml
+// DOSYA 282: .github/workflows/build.yml
+name: Build Ja.i APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: '17', distribution: 'temurin' }
+      - uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+      - name: Build Debug
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with: { name: jai-debug-apk, path: app/build/outputs/apk/debug/*.apk }
+```
+
+```text
+// DOSYA 283: .gitignore
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+*.apk
+*.keystore
+```
+
+```markdown
+// DOSYA 284: README.md
+# Ja.i Projesi
+Kendi yerel zekâsıyla çalışan Android asistanı.
+Model eğitimi için `colab/train_on_colab.ipynb` kullanılır.
+Eğitilen `model_int8.bin` ve `image_model_int8.bin` dosyaları `app/src/main/assets/` içine atılmalıdır.
+```
+
+```proguard
+// DOSYA 285: app/proguard-rules.pro
+-keep class com.jai.app.data.** { *; }
+-keep class com.jai.app.model.** { *; }
+-keepclassmembers class * extends androidx.room.RoomDatabase { *; }
+-dontwarn okhttp3.**
+-dontwarn org.jsoup.**
+```
