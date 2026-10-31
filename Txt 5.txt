@@ -1,0 +1,1571 @@
+```java
+// DOSYA 52: app/src/main/java/com/jai/app/brain/TaskPlanner.java
+package com.jai.app.brain;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+public class TaskPlanner {
+    public static class Step {
+        public final String toolId;
+        public final Map<String, Object> input;
+        public Step(String t, Map<String, Object> i) { toolId = t; input = i; }
+    }
+    public List<Step> plan(String userInput, BrainEngine.Intent intent) {
+        List<Step> steps = new ArrayList<>();
+        if (intent == BrainEngine.Intent.MATH) {
+            Map<String, Object> in = new HashMap<>(); in.put("expr", userInput); steps.add(new Step("math", in));
+        } else if (intent == BrainEngine.Intent.TIME) {
+            steps.add(new Step("clock", new HashMap<>()));
+        }
+        return steps;
+    }
+}
+```
+
+```java
+// DOSYA 53: app/src/main/java/com/jai/app/brain/ExpressionEvaluator.java
+package com.jai.app.brain;
+public final class ExpressionEvaluator {
+    public static Double eval(String raw) {
+        if (raw == null) return null;
+        String s = raw.replace(",", ".").replace(" ", "");
+        if (s.isEmpty()) return null;
+        try {
+            Parser p = new Parser(s);
+            double v = p.parseExpression();
+            if (p.pos != s.length()) return null;
+            if (Double.isNaN(v) || Double.isInfinite(v)) return null;
+            return v;
+        } catch (RuntimeException e) { return null; }
+    }
+    private static final class Parser {
+        final String s; int pos = 0;
+        Parser(String s) { this.s = s; }
+        double parseExpression() {
+            double v = parseTerm();
+            while (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) {
+                char op = s.charAt(pos++); double r = parseTerm();
+                v = (op == '+') ? v + r : v - r;
+            }
+            return v;
+        }
+        double parseTerm() {
+            double v = parseFactor();
+            while (pos < s.length() && (s.charAt(pos) == '*' || s.charAt(pos) == '/')) {
+                char op = s.charAt(pos++); double r = parseFactor();
+                if (op == '*') v *= r; else { if (r == 0) throw new ArithmeticException(); v /= r; }
+            }
+            return v;
+        }
+        double parseFactor() {
+            if (pos < s.length() && s.charAt(pos) == '(') {
+                pos++; double v = parseExpression();
+                if (pos >= s.length() || s.charAt(pos) != ')') throw new RuntimeException();
+                pos++; return v;
+            }
+            if (pos < s.length() && s.charAt(pos) == '-') { pos++; return -parseFactor(); }
+            int start = pos;
+            while (pos < s.length() && (Character.isDigit(s.charAt(pos)) || s.charAt(pos) == '.')) pos++;
+            if (start == pos) throw new RuntimeException();
+            return Double.parseDouble(s.substring(start, pos));
+        }
+    }
+}
+```
+
+```java
+// DOSYA 54: app/src/main/java/com/jai/app/tools/Tool.java
+package com.jai.app.tools;
+import java.util.Map;
+public interface Tool {
+    String id();
+    String name();
+    ToolResult execute(Map<String, Object> input) throws Exception;
+}
+```
+
+```java
+// DOSYA 55: app/src/main/java/com/jai/app/tools/ToolResult.java
+package com.jai.app.tools;
+public class ToolResult {
+    public final boolean ok;
+    public final String output;
+    public final String error;
+    public ToolResult(boolean ok, String o, String e) { this.ok = ok; output = o; error = e; }
+    public static ToolResult ok(String o) { return new ToolResult(true, o, null); }
+    public static ToolResult err(String e) { return new ToolResult(false, null, e); }
+}
+```
+
+```java
+// DOSYA 56: app/src/main/java/com/jai/app/tools/ToolRegistry.java
+package com.jai.app.tools;
+import android.content.Context;
+import com.jai.app.data.AppDatabase;
+import java.util.HashMap;
+import java.util.Map;
+public class ToolRegistry {
+    private final Map<String, Tool> tools = new HashMap<>();
+    public ToolRegistry(Context ctx, AppDatabase db) {
+        register(new MathTool());
+        register(new ClockTool());
+        register(new MemorySearchTool(db));
+        register(new FileReadTool(ctx));
+        register(new FileWriteTool(ctx));
+        register(new ZipTool(ctx));
+    }
+    private void register(Tool t) { tools.put(t.id(), t); }
+    public Tool get(String id) { return tools.get(id); }
+}
+```
+
+```java
+// DOSYA 57: app/src/main/java/com/jai/app/tools/MathTool.java
+package com.jai.app.tools;
+import com.jai.app.brain.ExpressionEvaluator;
+import java.util.Map;
+public class MathTool implements Tool {
+    public String id() { return "math"; }
+    public String name() { return "Matematik"; }
+    public ToolResult execute(Map<String, Object> input) {
+        Object e = input.get("expr");
+        if (e == null) return ToolResult.err("expr yok");
+        Double v = ExpressionEvaluator.eval(e.toString());
+        if (v == null) return ToolResult.err("ifade çözümlenemedi");
+        String out = (v == Math.rint(v) && !Double.isInfinite(v)) ? String.valueOf(v.longValue()) : String.valueOf(v);
+        return ToolResult.ok(out);
+    }
+}
+```
+
+```java
+// DOSYA 58: app/src/main/java/com/jai/app/tools/ClockTool.java
+package com.jai.app.tools;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.Map;
+public class ClockTool implements Tool {
+    public String id() { return "clock"; }
+    public String name() { return "Saat"; }
+    public ToolResult execute(Map<String, Object> input) {
+        return ToolResult.ok(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", new Locale("tr", "TR")).format(new Date()));
+    }
+}
+```
+
+```java
+// DOSYA 59: app/src/main/java/com/jai/app/tools/MemorySearchTool.java
+package com.jai.app.tools;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+public class MemorySearchTool implements Tool {
+    private final AppDatabase db;
+    public MemorySearchTool(AppDatabase db) { this.db = db; }
+    public String id() { return "memory_search"; }
+    public String name() { return "Hafıza"; }
+    public ToolResult execute(Map<String, Object> input) {
+        Object q = input.get("query");
+        if (q == null) return ToolResult.err("query yok");
+        String like = "%" + q.toString().toLowerCase(new Locale("tr", "TR")) + "%";
+        List<KnowledgeEntity> hits = db.knowledge().search(like);
+        if (hits.isEmpty()) return ToolResult.ok("(kayıt bulunamadı)");
+        StringBuilder sb = new StringBuilder();
+        for (KnowledgeEntity k : hits) sb.append("• [").append(k.topic).append("] ").append(k.content).append('\n');
+        return ToolResult.ok(sb.toString().trim());
+    }
+}
+```
+
+```java
+// DOSYA 60: app/src/main/java/com/jai/app/tools/FileReadTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+public class FileReadTool implements Tool {
+    private final Context ctx;
+    public FileReadTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "file_read"; }
+    public String name() { return "Dosya Okuma"; }
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        Object u = input.get("uri");
+        if (u == null) return ToolResult.err("uri yok");
+        try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u.toString()))) {
+            if (in == null) return ToolResult.err("açılamadı");
+            byte[] buf = new byte[8192]; int read; StringBuilder sb = new StringBuilder();
+            while ((read = in.read(buf)) > 0) sb.append(new String(buf, 0, read, StandardCharsets.UTF_8));
+            return ToolResult.ok(sb.toString());
+        }
+    }
+}
+```
+
+```java
+// DOSYA 61: app/src/main/java/com/jai/app/tools/FileWriteTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+public class FileWriteTool implements Tool {
+    private final Context ctx;
+    public FileWriteTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "file_write"; }
+    public String name() { return "Dosya Yazma"; }
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        Object n = input.get("name"); Object c = input.get("content");
+        if (n == null || c == null) return ToolResult.err("eksik parametre");
+        File dir = new File(ctx.getFilesDir(), "outputs"); dir.mkdirs();
+        File f = new File(dir, n.toString().replaceAll("[^a-zA-Z0-9._-]", "_"));
+        try (FileOutputStream out = new FileOutputStream(f)) { out.write(c.toString().getBytes(StandardCharsets.UTF_8)); }
+        return ToolResult.ok(FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".files", f).toString());
+    }
+}
+```
+
+```java
+// DOSYA 62: app/src/main/java/com/jai/app/tools/ZipTool.java
+package com.jai.app.tools;
+import android.content.Context;
+import android.net.Uri;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+public class ZipTool implements Tool {
+    private final Context ctx;
+    public ZipTool(Context ctx) { this.ctx = ctx; }
+    public String id() { return "zip"; }
+    public String name() { return "ZIP"; }
+    @SuppressWarnings("unchecked")
+    public ToolResult execute(Map<String, Object> input) throws Exception {
+        List<String> uris = (List<String>) input.get("uris");
+        if (uris == null || uris.isEmpty()) return ToolResult.err("uri yok");
+        File dir = new File(ctx.getFilesDir(), "outputs"); dir.mkdirs();
+        File zf = new File(dir, "archive_" + System.currentTimeMillis() + ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zf))) {
+            for (String u : uris) {
+                String name = Uri.parse(u).getLastPathSegment();
+                if (name == null) name = "file";
+                name = name.replace("..", "_").replace("/", "_").replace("\\", "_");
+                zos.putNextEntry(new ZipEntry(name));
+                try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u))) {
+                    if (in != null) { byte[] buf = new byte[8192]; int r; while ((r = in.read(buf)) > 0) zos.write(buf, 0, r); }
+                }
+                zos.closeEntry();
+            }
+        }
+        return ToolResult.ok(FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".files", zf).toString());
+    }
+}
+```
+
+```java
+// DOSYA 63: app/src/main/java/com/jai/app/auth/AuthManager.java
+package com.jai.app.auth;
+import android.content.Context;
+import android.content.SharedPreferences;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.User;
+import java.util.UUID;
+public class AuthManager {
+    private final AppDatabase db;
+    private final SharedPreferences prefs;
+    public AuthManager(Context ctx, AppDatabase db) {
+        this.db = db; this.prefs = ctx.getSharedPreferences("jai_auth", Context.MODE_PRIVATE);
+    }
+    public String register(String name, String surname, String email, int age) {
+        if (name == null || name.trim().isEmpty()) return "İsim boş olamaz";
+        if (email == null || !email.contains("@")) return "Geçersiz e-posta";
+        if (db.users().byName(name.trim()) != null) return "Bu isim zaten kayıtlı";
+        if (db.users().byEmail(email.trim().toLowerCase()) != null) return "Bu e-posta zaten kayıtlı";
+        User u = new User(name.trim(), surname, email.trim().toLowerCase(), age, UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+        long id = db.users().insert(u);
+        prefs.edit().putLong("uid", id).apply();
+        return "OK";
+    }
+    public User currentUser() {
+        long id = prefs.getLong("uid", -1);
+        if (id < 0) return null;
+        for (User u : db.users().all()) if (u.id == id) return u;
+        return null;
+    }
+    public boolean isAdmin() { return prefs.getBoolean("is_admin", false); }
+    public void setAdmin(boolean admin) { prefs.edit().putBoolean("is_admin", admin).apply(); }
+}
+```
+
+```java
+// DOSYA 64: app/src/main/java/com/jai/app/auth/AdminSecret.java
+package com.jai.app.auth;
+public final class AdminSecret {
+    public static final String PASS = "12341234";
+    public static boolean check(String p) { return PASS.equals(p); }
+    private AdminSecret() {}
+}
+```
+
+```java
+// DOSYA 65: app/src/main/java/com/jai/app/ui/RegisterActivity.java
+package com.jai.app.ui;
+import android.content.Intent;
+import android.os.Bundle;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+import com.jai.app.auth.AdminSecret;
+import com.jai.app.auth.AuthManager;
+import com.jai.app.data.AppDatabase;
+public class RegisterActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        AppDatabase db = AppDatabase.get(this);
+        AuthManager auth = new AuthManager(this, db);
+        if (auth.currentUser() != null) { startActivity(new Intent(this, MainActivity.class)); finish(); return; }
+        setContentView(R.layout.activity_register);
+        EditText n = findViewById(R.id.inputName), s = findViewById(R.id.inputSurname), e = findViewById(R.id.inputEmail), a = findViewById(R.id.inputAge);
+        findViewById(R.id.btnRegister).setOnClickListener(v -> {
+            try {
+                int age = Integer.parseInt(a.getText().toString());
+                String res = auth.register(n.getText().toString(), s.getText().toString(), e.getText().toString(), age);
+                if ("OK".equals(res)) { startActivity(new Intent(this, MainActivity.class)); finish(); }
+                else Toast.makeText(this, res, Toast.LENGTH_SHORT).show();
+            } catch (Exception ex) { Toast.makeText(this, "Geçersiz yaş", Toast.LENGTH_SHORT).show(); }
+        });
+        findViewById(R.id.txtAdmin).setOnClickListener(v -> {
+            EditText p = new EditText(this);
+            new AlertDialog.Builder(this).setTitle("Admin Şifresi").setView(p)
+                .setPositiveButton("Gir", (d, w) -> {
+                    if (AdminSecret.check(p.getText().toString())) {
+                        auth.setAdmin(true); startActivity(new Intent(this, AdminActivity.class));
+                    } else Toast.makeText(this, "Hatalı şifre", Toast.LENGTH_SHORT).show();
+                }).setNegativeButton("İptal", null).show();
+        });
+    }
+}
+```
+
+```java
+// DOSYA 66: app/src/main/java/com/jai/app/ui/AdminActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.auth.AuthManager;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.User;
+import java.util.List;
+public class AdminActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_admin);
+        AuthManager auth = new AuthManager(this, AppDatabase.get(this));
+        if (!auth.isAdmin()) { finish(); return; }
+        RecyclerView rv = findViewById(R.id.listUsers); rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setAdapter(new UserAdapter(AppDatabase.get(this).users().all()));
+    }
+    static class UserAdapter extends RecyclerView.Adapter<UserAdapter.VH> {
+        final List<User> users; UserAdapter(List<User> u) { users = u; }
+        @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup p, int t) { return new VH(LayoutInflater.from(p.getContext()).inflate(R.layout.item_user, p, false)); }
+        @Override public void onBindViewHolder(@NonNull VH h, int i) {
+            h.name.setText(users.get(i).name + " " + users.get(i).surname);
+            h.email.setText(users.get(i).email + " · Yaş: " + users.get(i).age);
+        }
+        @Override public int getItemCount() { return users.size(); }
+        static class VH extends RecyclerView.ViewHolder { TextView name, email; VH(@NonNull View v) { super(v); name = v.findViewById(R.id.txtName); email = v.findViewById(R.id.txtEmail); } }
+    }
+}
+```
+
+```java
+// DOSYA 67: app/src/main/java/com/jai/app/ui/MessageAdapter.java
+package com.jai.app.ui;
+import android.view.Gravity;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.R;
+import com.jai.app.data.Message;
+import java.util.ArrayList;
+import java.util.List;
+public class MessageAdapter extends RecyclerView.Adapter<MessageAdapter.VH> {
+    private final List<Message> items = new ArrayList<>();
+    public void setItems(List<Message> list) { items.clear(); if (list != null) items.addAll(list); notifyDataSetChanged(); }
+    public void append(Message m) { items.add(m); notifyItemInserted(items.size() - 1); }
+    @NonNull @Override public VH onCreateViewHolder(@NonNull ViewGroup p, int t) { return new VH(LayoutInflater.from(p.getContext()).inflate(R.layout.item_message, p, false)); }
+    @Override public void onBindViewHolder(@NonNull VH h, int i) {
+        Message m = items.get(i); boolean user = "user".equals(m.role);
+        h.bubble.setGravity(user ? Gravity.END : Gravity.START);
+        h.text.setText(m.content);
+        h.text.setBackgroundResource(user ? R.drawable.bg_user_bubble : R.drawable.bg_nova_bubble);
+        h.meta.setText((m.mode != null ? m.mode : "") + (m.status != null ? " · " + m.status : ""));
+    }
+    @Override public int getItemCount() { return items.size(); }
+    static class VH extends RecyclerView.ViewHolder { LinearLayout bubble; TextView text, meta; VH(@NonNull View v) { super(v); bubble = v.findViewById(R.id.bubble); text = v.findViewById(R.id.text); meta = v.findViewById(R.id.meta); } }
+}
+```
+
+```java
+// DOSYA 68: app/src/main/java/com/jai/app/ui/MainActivity.java
+package com.jai.app.ui;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.EditText;
+import android.widget.TextView;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.jai.app.JaiApp;
+import com.jai.app.R;
+import com.jai.app.brain.BrainEngine;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+import com.jai.app.data.Message;
+import com.jai.app.tools.ToolRegistry;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+public class MainActivity extends AppCompatActivity {
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private AppDatabase db; private Conversation conv;
+    private MessageAdapter adapter; private BrainEngine brain; private ToolRegistry tools;
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_main);
+        db = AppDatabase.get(this); brain = new BrainEngine(JaiApp.get().runtime()); tools = new ToolRegistry(this, db);
+        RecyclerView rv = findViewById(R.id.list); adapter = new MessageAdapter();
+        rv.setLayoutManager(new LinearLayoutManager(this)); rv.setAdapter(adapter);
+        TextView state = findViewById(R.id.txtModelState); state.setText(JaiApp.get().runtime().getState());
+        EditText input = findViewById(R.id.input);
+        io.execute(() -> {
+            List<Conversation> all = db.conversations().all();
+            if (all.isEmpty()) { long id = db.conversations().insert(new Conversation("Sohbet")); conv = db.conversations().byId(id); }
+            else conv = all.get(0);
+            List<Message> msgs = db.messages().forConversation(conv.id);
+            ui.post(() -> adapter.setItems(msgs));
+        });
+        findViewById(R.id.btnSend).setOnClickListener(v -> {
+            String text = input.getText().toString().trim(); if (text.isEmpty() || conv == null) return;
+            input.setText("");
+            Message uMsg = new Message(conv.id, "user", text, "FLASH", "MID", false, "OK", null);
+            adapter.append(uMsg); ui.post(() -> rv.scrollToPosition(adapter.getItemCount() - 1));
+            io.execute(() -> {
+                db.messages().insert(uMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                String reply = brain.respond(text);
+                Message nMsg = new Message(conv.id, "nova", reply, "FLASH", "MID", false, "OK", null);
+                db.messages().insert(nMsg); db.conversations().touch(conv.id, System.currentTimeMillis());
+                ui.post(() -> { adapter.append(nMsg); rv.scrollToPosition(adapter.getItemCount() - 1); });
+            });
+        });
+    }
+    @Override protected void onDestroy() { super.onDestroy(); io.shutdown(); }
+}
+```
+
+```java
+// DOSYA 69: app/src/main/java/com/jai/app/ui/VideoActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.Spinner;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
+import com.jai.app.R;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.VideoJobEntity;
+import com.jai.app.work.VideoWorker;
+public class VideoActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_video);
+        EditText p = findViewById(R.id.inputPrompt);
+        Spinner dur = findViewById(R.id.spinnerDuration), qual = findViewById(R.id.spinnerQuality);
+        dur.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"5s", "30s", "1dk", "5dk", "10dk"}));
+        qual.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"512p", "1024p"}));
+        findViewById(R.id.btnStartVideo).setOnClickListener(v -> {
+            int d = new int[]{5, 30, 60, 300, 600}[dur.getSelectedItemPosition()];
+            int q = qual.getSelectedItemPosition() == 1 ? 1024 : 512;
+            VideoJobEntity j = new VideoJobEntity(p.getText().toString(), d, q);
+            AppDatabase.get(this).videoJobs().insert(j);
+            WorkManager.getInstance(this).enqueue(new OneTimeWorkRequest.Builder(VideoWorker.class).build());
+            finish();
+        });
+    }
+}
+```
+
+```java
+// DOSYA 70: app/src/main/java/com/jai/app/ui/VideoPlayerActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+public class VideoPlayerActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(R.layout.activity_main); }
+}
+```
+
+```java
+// DOSYA 71: app/src/main/java/com/jai/app/ui/VideoGalleryActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+public class VideoGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(R.layout.activity_admin); }
+}
+```
+
+```java
+// DOSYA 72: app/src/main/java/com/jai/app/ui/ImageGalleryActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+public class ImageGalleryActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(R.layout.activity_admin); }
+}
+```
+
+```java
+// DOSYA 73: app/src/main/java/com/jai/app/ui/ImageGenerateActivity.java
+package com.jai.app.ui;
+import android.graphics.Bitmap;
+import android.os.Bundle;
+import android.widget.EditText;
+import android.widget.ImageView;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+import com.jai.app.image.ProceduralImageGen;
+import com.jai.app.sr.SRPipeline;
+import com.jai.app.sr.SRModel;
+public class ImageGenerateActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b); setContentView(R.layout.activity_image);
+        EditText p = findViewById(R.id.inputPrompt); ImageView img = findViewById(R.id.imagePreview);
+        findViewById(R.id.btnGenerate).setOnClickListener(v -> {
+            Bitmap base = ProceduralImageGen.generate(p.getText().toString(), 512);
+            Bitmap up = new SRPipeline(new SRModel()).upscale(base);
+            img.setImageBitmap(up);
+        });
+    }
+}
+```
+
+```java
+// DOSYA 74: app/src/main/java/com/jai/app/ui/LearningActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+public class LearningActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(R.layout.activity_admin); }
+}
+```
+
+```java
+// DOSYA 75: app/src/main/java/com/jai/app/ui/SettingsActivity.java
+package com.jai.app.ui;
+import android.os.Bundle;
+import androidx.appcompat.app.AppCompatActivity;
+import com.jai.app.R;
+public class SettingsActivity extends AppCompatActivity {
+    @Override protected void onCreate(Bundle b) { super.onCreate(b); setContentView(R.layout.activity_admin); }
+}
+```
+
+```java
+// DOSYA 76: app/src/main/java/com/jai/app/work/BootReceiver.java
+package com.jai.app.work;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import androidx.work.PeriodicWorkRequest;
+import androidx.work.WorkManager;
+import java.util.concurrent.TimeUnit;
+public class BootReceiver extends BroadcastReceiver {
+    @Override public void onReceive(Context ctx, Intent i) {
+        WorkManager.getInstance(ctx).enqueue(new PeriodicWorkRequest.Builder(LearningWorker.class, 15, TimeUnit.MINUTES).build());
+    }
+}
+```
+
+```java
+// DOSYA 77: app/src/main/java/com/jai/app/work/VideoWorker.java
+package com.jai.app.work;
+import android.content.Context;
+import androidx.annotation.NonNull;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.VideoJobEntity;
+import com.jai.app.video.VideoPipeline;
+public class VideoWorker extends Worker {
+    public VideoWorker(@NonNull Context c, @NonNull WorkerParameters p) { super(c, p); }
+    @NonNull @Override public Result doWork() {
+        AppDatabase db = AppDatabase.get(getApplicationContext());
+        VideoJobEntity job = db.videoJobs().nextPending();
+        if (job == null) return Result.success();
+        job.status = "RUNNING"; db.videoJobs().update(job);
+        boolean ok = new VideoPipeline(getApplicationContext()).runJob(job, (d, t) -> {
+            job.framesDone = d; db.videoJobs().update(job);
+        });
+        job.status = ok ? "DONE" : "FAILED"; db.videoJobs().update(job);
+        return ok ? Result.success() : Result.failure();
+    }
+}
+```
+
+```java
+// DOSYA 78: app/src/main/java/com/jai/app/work/LearningWorker.java
+package com.jai.app.work;
+import android.content.Context;
+import androidx.annotation.NonNull;
+import androidx.work.Worker;
+import androidx.work.WorkerParameters;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.LearningTaskEntity;
+import com.jai.app.web.WebResearchEngine;
+import java.util.List;
+public class LearningWorker extends Worker {
+    public LearningWorker(@NonNull Context c, @NonNull WorkerParameters p) { super(c, p); }
+    @NonNull @Override public Result doWork() {
+        AppDatabase db = AppDatabase.get(getApplicationContext());
+        List<LearningTaskEntity> tasks = db.learningTasks().all();
+        for (LearningTaskEntity t : tasks) {
+            if ("PENDING".equals(t.status)) {
+                new WebResearchEngine(db).search(t.topic);
+                t.status = "DONE"; db.learningTasks().insert(t);
+            }
+        }
+        return Result.success();
+    }
+}
+```
+
+```java
+// DOSYA 79: app/src/main/java/com/jai/app/messaging/MessagingService.java
+package com.jai.app.messaging;
+import android.app.Service;
+import android.content.Intent;
+import android.os.IBinder;
+import androidx.annotation.Nullable;
+public class MessagingService extends Service {
+    @Nullable @Override public IBinder onBind(Intent i) { return null; }
+    @Override public int onStartCommand(Intent i, int f, int s) { return START_STICKY; }
+}
+```
+
+```java
+// DOSYA 80: app/src/main/java/com/jai/app/messaging/MessagingClient.java
+package com.jai.app.messaging;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import okhttp3.*;
+import java.util.concurrent.TimeUnit;
+public class MessagingClient {
+    private WebSocket ws; private OkHttpClient client = new OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build();
+    public void connect(String url, String user) {
+        ws = client.newWebSocket(new Request.Builder().url(url + "?user=" + user).build(), new WebSocketListener() {
+            @Override public void onMessage(@NonNull WebSocket w, @NonNull String text) {}
+            @Override public void onFailure(@NonNull WebSocket w, @NonNull Throwable t, @Nullable Response r) {}
+        });
+    }
+    public void send(String json) { if (ws != null) ws.send(json); }
+}
+```
+
+```java
+// DOSYA 81: app/src/main/java/com/jai/app/messaging/MessagingState.java
+package com.jai.app.messaging;
+public enum MessagingState { DISCONNECTED, CONNECTED, ERROR }
+```
+
+```java
+// DOSYA 82: app/src/main/java/com/jai/app/video/VideoPipeline.java
+package com.jai.app.video;
+import android.content.Context;
+import android.graphics.Bitmap;
+import com.jai.app.data.VideoJobEntity;
+import com.jai.app.sr.SRPipeline;
+import com.jai.app.sr.SRModel;
+import java.io.File;
+public class VideoPipeline {
+    private final Context ctx;
+    public VideoPipeline(Context ctx) { this.ctx = ctx; }
+    public boolean runJob(VideoJobEntity job, ProgressListener listener) {
+        try {
+            File dir = new File(ctx.getFilesDir(), "outputs/video/job_" + job.id); dir.mkdirs();
+            FrameGenerator gen = new FrameGenerator(job.prompt, job.quality, job.quality);
+            VideoEncoder enc = new VideoEncoder(dir, job.quality, job.quality);
+            SRPipeline sr = job.quality == 512 ? new SRPipeline(new SRModel()) : null;
+            for (int i = job.framesDone; i < job.framesTotal; i++) {
+                Bitmap f = gen.renderFrame(i, job.framesTotal);
+                if (sr != null) f = sr.upscale(f);
+                enc.writeFrame(f, i); f.recycle();
+                if (listener != null) listener.onProgress(i + 1, job.framesTotal);
+            }
+            enc.finish();
+            job.outputPath = new File(dir, "video.mp4").getAbsolutePath();
+            return true;
+        } catch (Exception e) { return false; }
+    }
+    public interface ProgressListener { void onProgress(int done, int total); }
+}
+```
+
+```java
+// DOSYA 83: app/src/main/java/com/jai/app/video/VideoEncoder.java
+package com.jai.app.video;
+import android.graphics.Bitmap;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
+import android.media.MediaMuxer;
+import java.io.File;
+import java.nio.ByteBuffer;
+public class VideoEncoder {
+    private MediaCodec codec; private MediaMuxer muxer; private int track; private boolean muxerStarted;
+    public VideoEncoder(File dir, int w, int h) throws Exception {
+        MediaFormat fmt = MediaFormat.createVideoFormat("video/avc", w, h);
+        fmt.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+        fmt.setInteger(MediaFormat.KEY_BIT_RATE, 4000000); fmt.setInteger(MediaFormat.KEY_FRAME_RATE, 24); fmt.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+        codec = MediaCodec.createEncoderByType("video/avc"); codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); codec.start();
+        muxer = new MediaMuxer(new File(dir, "video.mp4").getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+    }
+    public void writeFrame(Bitmap bmp, int idx) throws Exception {
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        int inIdx = codec.dequeueInputBuffer(10000);
+        if (inIdx >= 0) {
+            ByteBuffer buf = codec.getInputBuffer(inIdx);
+            if (buf != null) {
+                int[] pixels = new int[bmp.getWidth() * bmp.getHeight()]; bmp.getPixels(pixels, 0, bmp.getWidth(), 0, 0, bmp.getWidth(), bmp.getHeight());
+                byte[] yuv = rgbToYuv(pixels, bmp.getWidth(), bmp.getHeight()); buf.clear(); buf.put(yuv);
+                codec.queueInputBuffer(inIdx, 0, yuv.length, idx * 33333L, 0);
+            }
+        }
+        int outIdx = codec.dequeueOutputBuffer(info, 10000);
+        if (outIdx >= 0) {
+            ByteBuffer outBuf = codec.getOutputBuffer(outIdx);
+            if (outBuf != null && info.size > 0 && !muxerStarted) {
+                MediaFormat outFmt = codec.getOutputFormat(); track = muxer.addTrack(outFmt); muxer.start(); muxerStarted = true;
+            }
+            if (muxerStarted && outBuf != null) { outBuf.position(info.offset); outBuf.limit(info.offset + info.size); muxer.writeSampleData(track, outBuf, info); }
+            codec.releaseOutputBuffer(outIdx, false);
+        }
+    }
+    public void finish() { codec.stop(); codec.release(); if (muxerStarted) { muxer.stop(); muxer.release(); } }
+    private byte[] rgbToYuv(int[] rgb, int w, int h) {
+        byte[] yuv = new byte[w * h * 3 / 2];
+        for (int i = 0; i < w * h; i++) { int r = (rgb[i] >> 16) & 0xff, g = (rgb[i] >> 8) & 0xff, b = rgb[i] & 0xff; yuv[i] = (byte) (0.299 * r + 0.587 * g + 0.114 * b); }
+        return yuv;
+    }
+}
+```
+
+```java
+// DOSYA 84: app/src/main/java/com/jai/app/video/AudioTrackWriter.java
+package com.jai.app.video;
+public class AudioTrackWriter {
+    public void write() { }
+}
+```
+
+```java
+// DOSYA 85: app/src/main/java/com/jai/app/video/FrameGenerator.java
+package com.jai.app.video;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+public class FrameGenerator {
+    private final int w, h; private final int baseHue; private final int seed;
+    public FrameGenerator(String prompt, int w, int h) { this.w = w; this.h = h; this.seed = prompt.hashCode(); this.baseHue = Math.abs(seed) % 360; }
+    public Bitmap renderFrame(int idx, int total) {
+        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); Canvas c = new Canvas(bmp); Paint p = new Paint();
+        float t = (float) idx / total;
+        c.drawColor(Color.HSVToColor(new float[]{ (baseHue + t * 60) % 360, 0.5f, 0.2f }));
+        p.setColor(Color.HSVToColor(new float[]{ (baseHue + 180 + t * 90) % 360, 0.8f, 0.9f }));
+        c.drawCircle(w/2f + (float)Math.sin(t*6.28)*w/4, h/2f + (float)Math.cos(t*6.28)*h/4, w/8f, p);
+        return bmp;
+    }
+}
+```
+
+```java
+// DOSYA 86: app/src/main/java/com/jai/app/sr/SRModel.java
+package com.jai.app.sr;
+public class SRModel {
+    public int[] upscale(int[] in, int w, int h) {
+        int ow = w * 2, oh = h * 2; int[] out = new int[ow * oh];
+        for (int y = 0; y < oh; y++) for (int x = 0; x < ow; x++) out[y * ow + x] = in[(y / 2) * w + (x / 2)];
+        return out;
+    }
+}
+```
+
+```java
+// DOSYA 87: app/src/main/java/com/jai/app/sr/SRLoader.java
+package com.jai.app.sr;
+import android.content.Context;
+public class SRLoader {
+    public static SRModel load(Context ctx) { return new SRModel(); }
+}
+```
+
+```java
+// DOSYA 88: app/src/main/java/com/jai/app/sr/SRPipeline.java
+package com.jai.app.sr;
+import android.graphics.Bitmap;
+public class SRPipeline {
+    private final SRModel model;
+    public SRPipeline(SRModel m) { this.model = m; }
+    public Bitmap upscale(Bitmap src) {
+        int w = src.getWidth(), h = src.getHeight();
+        int[] px = new int[w * h]; src.getPixels(px, 0, w, 0, 0, w, h);
+        int[] up = model.upscale(px, w, h);
+        Bitmap out = Bitmap.createBitmap(w * 2, h * 2, Bitmap.Config.ARGB_8888);
+        out.setPixels(up, 0, w * 2, 0, 0, w * 2, h * 2);
+        return out;
+    }
+}
+```
+
+```java
+// DOSYA 89: app/src/main/java/com/jai/app/image/ProceduralImageGen.java
+package com.jai.app.image;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+public class ProceduralImageGen {
+    public static Bitmap generate(String prompt, int size) {
+        int h = prompt.hashCode(), hue = Math.abs(h) % 360;
+        Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(bmp); Paint p = new Paint();
+        c.drawColor(Color.HSVToColor(new float[]{ hue, 0.4f, 0.2f }));
+        java.util.Random r = new java.util.Random(h);
+        for (int i = 0; i < 8; i++) {
+            p.setColor(Color.HSVToColor(new float[]{ (hue + r.nextInt(90)) % 360, 0.7f, 0.8f }));
+            p.setAlpha(100 + r.nextInt(100));
+            c.drawCircle(r.nextInt(size), r.nextInt(size), size / 6 + r.nextInt(size / 4), p);
+        }
+        return bmp;
+    }
+}
+```
+
+```java
+// DOSYA 90: app/src/main/java/com/jai/app/image/ImageJob.java
+package com.jai.app.image;
+public class ImageJob {
+    public String prompt; public String outputPath;
+}
+```
+
+```java
+// DOSYA 91: app/src/main/java/com/jai/app/web/WebResearchEngine.java
+package com.jai.app.web;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+import com.jai.app.tools.ToolResult;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import java.net.URLEncoder;
+public class WebResearchEngine {
+    private final AppDatabase db;
+    public WebResearchEngine(AppDatabase db) { this.db = db; }
+    public ToolResult search(String query) {
+        try {
+            Document doc = Jsoup.connect("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8")).userAgent("Mozilla/5.0").timeout(10000).get();
+            StringBuilder sb = new StringBuilder(); int count = 0;
+            for (Element a : doc.select("a.result__a")) {
+                String title = a.text(); String href = a.attr("href");
+                String snip = "";
+                if (a.parent() != null && a.parent().selectFirst(".result__snippet") != null) snip = a.parent().selectFirst(".result__snippet").text();
+                sb.append("• ").append(title).append("\n  ").append(snip).append("\n\n");
+                db.knowledge().insert(new KnowledgeEntity(query, title + " - " + snip, href));
+                if (++count >= 5) break;
+            }
+            return count == 0 ? ToolResult.ok("(Sonuç yok)") : ToolResult.ok(sb.toString());
+        } catch (Exception e) { return ToolResult.err(e.getMessage()); }
+    }
+}
+```
+
+```java
+// DOSYA 92: app/src/main/java/com/jai/app/memory/RagEngine.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+import java.util.List;
+public class RagEngine {
+    private final AppDatabase db;
+    public RagEngine(AppDatabase db) { this.db = db; }
+    public String buildContext(String query) {
+        List<KnowledgeEntity> hits = db.knowledge().search("%" + query.toLowerCase() + "%");
+        StringBuilder sb = new StringBuilder();
+        for (KnowledgeEntity k : hits) sb.append("[").append(k.topic).append("] ").append(k.content).append("\n");
+        return sb.toString();
+    }
+}
+```
+
+```java
+// DOSYA 93: app/src/main/java/com/jai/app/memory/MemoryBank.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+public class MemoryBank {
+    private final AppDatabase db;
+    public MemoryBank(AppDatabase db) { this.db = db; }
+    public void save(String topic, String content, String source) { db.knowledge().insert(new KnowledgeEntity(topic, content, source)); }
+}
+```
+
+```java
+// DOSYA 94: app/src/main/java/com/jai/app/memory/LocalSearchEngine.java
+package com.jai.app.memory;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.KnowledgeEntity;
+import java.util.List;
+public class LocalSearchEngine {
+    private final AppDatabase db;
+    public LocalSearchEngine(AppDatabase db) { this.db = db; }
+    public List<KnowledgeEntity> search(String q) { return db.knowledge().search("%" + q.toLowerCase() + "%"); }
+}
+```
+
+```java
+// DOSYA 95: app/src/main/java/com/jai/app/codelab/CodeLabEngine.java
+package com.jai.app.codelab;
+public class CodeLabEngine {
+    public static class Analysis {
+        public final boolean ok; public final String report;
+        public Analysis(boolean ok, String report) { this.ok = ok; this.report = report; }
+    }
+    public Analysis analyze(String code, String lang) {
+        if (code == null || code.isEmpty()) return new Analysis(false, "Boş kod");
+        if (lang.equals("json")) {
+            try { new org.json.JSONObject(code); return new Analysis(true, "Geçerli JSON"); }
+            catch (Exception e) { return new Analysis(false, "Geçersiz JSON: " + e.getMessage()); }
+        }
+        int braces = 0, parens = 0;
+        for (char c : code.toCharArray()) { if (c == '{') braces++; else if (c == '}') braces--; else if (c == '(') parens++; else if (c == ')') parens--; }
+        if (braces == 0 && parens == 0) return new Analysis(true, "Denge tamam");
+        return new Analysis(false, "Denge bozuk: {}=" + braces + " ()=" + parens);
+    }
+}
+```
+
+```java
+// DOSYA 96: app/src/main/java/com/jai/app/speech/SpeechManager.java
+package com.jai.app.speech;
+import android.content.Context;
+import android.speech.tts.TextToSpeech;
+import java.util.Locale;
+public class SpeechManager {
+    private TextToSpeech tts;
+    public SpeechManager(Context ctx) {
+        tts = new TextToSpeech(ctx, status -> { if (status == TextToSpeech.SUCCESS) tts.setLanguage(new Locale("tr", "TR")); });
+    }
+    public void speak(String text) { if (tts != null) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, null); }
+}
+```
+
+```java
+// DOSYA 97: app/src/main/java/com/jai/app/resource/ResourceManager.java
+package com.jai.app.resource;
+import android.app.ActivityManager;
+import android.content.Context;
+import android.os.StatFs;
+public class ResourceManager {
+    private final Context ctx;
+    public ResourceManager(Context ctx) { this.ctx = ctx; }
+    public long freeRamMb() {
+        ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+        ((ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi);
+        return mi.availMem / (1024 * 1024);
+    }
+    public long freeStorageMb() {
+        StatFs s = new StatFs(ctx.getFilesDir().getAbsolutePath());
+        return (s.getAvailableBlocksLong() * s.getBlockSizeLong()) / (1024 * 1024);
+    }
+}
+```
+
+```java
+// DOSYA 98: app/src/main/java/com/jai/app/util/NetworkUtil.java
+package com.jai.app.util;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+public class NetworkUtil {
+    public static boolean isOnline(Context ctx) {
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        NetworkInfo ni = cm.getActiveNetworkInfo();
+        return ni != null && ni.isConnected();
+    }
+}
+```
+
+```java
+// DOSYA 99: app/src/main/java/com/jai/app/util/DateTimeUtil.java
+package com.jai.app.util;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+public class DateTimeUtil {
+    public static String now() { return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", new Locale("tr")).format(new Date()); }
+}
+```
+
+```java
+// DOSYA 100: app/src/main/java/com/jai/app/util/ThreadUtil.java
+package com.jai.app.util;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+public class ThreadUtil {
+    public static final ExecutorService io = Executors.newSingleThreadExecutor();
+    public static final Handler ui = new Handler(Looper.getMainLooper());
+}
+```
+
+```java
+// DOSYA 101: app/src/main/java/com/jai/app/util/JsonUtil.java
+package com.jai.app.util;
+import org.json.JSONObject;
+public class JsonUtil {
+    public static JSONObject obj(String... kv) {
+        JSONObject o = new JSONObject();
+        try { for (int i = 0; i + 1 < kv.length; i += 2) o.put(kv[i], kv[i + 1]); } catch (Exception ignored) {}
+        return o;
+    }
+}
+```
+
+```java
+// DOSYA 102: app/src/main/java/com/jai/app/notify/NotificationHelper.java
+package com.jai.app.notify;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.Context;
+import android.os.Build;
+import androidx.core.app.NotificationCompat;
+import com.jai.app.R;
+public class NotificationHelper {
+    public static void show(Context ctx, String title, String text) {
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = new NotificationChannel("jai", "Ja.i", NotificationManager.IMPORTANCE_DEFAULT);
+            ctx.getSystemService(NotificationManager.class).createNotificationChannel(ch);
+        }
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, "jai")
+            .setContentTitle(title).setContentText(text).setSmallIcon(R.drawable.ic_launcher).setAutoCancel(true);
+        ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).notify((int)System.currentTimeMillis(), b.build());
+    }
+}
+```
+
+```java
+// DOSYA 103: app/src/main/java/com/jai/app/ui/ThemeHelper.java
+package com.jai.app.ui;
+import androidx.appcompat.app.AppCompatDelegate;
+public class ThemeHelper {
+    public static void apply(String mode) {
+        if ("light".equals(mode)) AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+        else if ("system".equals(mode)) AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+        else AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+    }
+}
+```
+
+```java
+// DOSYA 104: app/src/main/java/com/jai/app/ui/ConversationDrawer.java
+package com.jai.app.ui;
+import android.app.AlertDialog;
+import android.content.Context;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+import java.util.List;
+public class ConversationDrawer {
+    public static void show(Context ctx, AppDatabase db) {
+        List<Conversation> list = db.conversations().all();
+        String[] titles = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) titles[i] = list.get(i).title;
+        new AlertDialog.Builder(ctx).setTitle("Sohbetler").setItems(titles, null).show();
+    }
+}
+```
+
+```java
+// DOSYA 105: app/src/main/java/com/jai/app/conversation/ConversationManager.java
+package com.jai.app.conversation;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.Conversation;
+public class ConversationManager {
+    private final AppDatabase db;
+    public ConversationManager(AppDatabase db) { this.db = db; }
+    public Conversation create(String title) { long id = db.conversations().insert(new Conversation(title)); return db.conversations().byId(id); }
+}
+```
+
+```java
+// DOSYA 106: app/src/main/java/com/jai/app/learning/LearningQueue.java
+package com.jai.app.learning;
+import com.jai.app.data.AppDatabase;
+import com.jai.app.data.LearningTaskEntity;
+public class LearningQueue {
+    private final AppDatabase db;
+    public LearningQueue(AppDatabase db) { this.db = db; }
+    public void enqueue(String topic, boolean urgent) { db.learningTasks().insert(new LearningTaskEntity(topic, urgent ? 10 : 0)); }
+}
+```
+
+```java
+// DOSYA 107: app/src/main/java/com/jai/app/learning/LearningVerifier.java
+package com.jai.app.learning;
+public class LearningVerifier {
+    public boolean conflicts(String a, String b) { return false; }
+}
+```
+
+```java
+// DOSYA 108: app/src/main/java/com/jai/app/trainer/Optimizer.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+public class Optimizer {
+    public final float lr;
+    public Optimizer(float lr) { this.lr = lr; }
+    public void step(Matrix param, Matrix grad) { for (int i = 0; i < param.data.length; i++) param.data[i] -= lr * grad.data[i]; }
+}
+```
+
+```java
+// DOSYA 109: app/src/main/java/com/jai/app/trainer/Loss.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+public class Loss {
+    public static float crossEntropy(Matrix logits, int[] targets) {
+        float total = 0;
+        for (int i = 0; i < logits.rows; i++) {
+            int row = i * logits.cols; float max = Float.NEGATIVE_INFINITY;
+            for (int j = 0; j < logits.cols; j++) if (logits.data[row + j] > max) max = logits.data[row + j];
+            float sum = 0; for (int j = 0; j < logits.cols; j++) sum += (float) Math.exp(logits.data[row + j] - max);
+            total -= (logits.data[row + targets[i]] - max - (float) Math.log(sum));
+        }
+        return total / logits.rows;
+    }
+}
+```
+
+```java
+// DOSYA 110: app/src/main/java/com/jai/app/trainer/DataLoader.java
+package com.jai.app.trainer;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.util.ArrayList;
+import java.util.List;
+public class DataLoader {
+    public static List<String> loadLines(String path) {
+        List<String> lines = new ArrayList<>();
+        try (BufferedReader r = new BufferedReader(new FileReader(path))) {
+            String line; while ((line = r.readLine()) != null) if (!line.trim().isEmpty()) lines.add(line);
+        } catch (Exception ignored) {}
+        return lines;
+    }
+}
+```
+
+```java
+// DOSYA 111: app/src/main/java/com/jai/app/trainer/Trainer.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+import com.jai.app.model.TransformerModel;
+public class Trainer {
+    public final TransformerModel model;
+    public final Optimizer opt;
+    public Trainer(TransformerModel m, float lr) { this.model = m; this.opt = new Optimizer(lr); }
+    public void trainStep(int[] input, int[] targets) {
+        Matrix logits = model.forward(input);
+        float loss = Loss.crossEntropy(logits, targets);
+    }
+}
+```
+
+```java
+// DOSYA 112: app/src/main/java/com/jai/app/trainer/CheckpointIO.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+import com.jai.app.model.TransformerModel;
+import java.io.DataOutputStream;
+import java.io.FileOutputStream;
+public class CheckpointIO {
+    public static void save(TransformerModel m, String path) throws Exception {
+        try (DataOutputStream out = new DataOutputStream(new FileOutputStream(path))) {
+            out.writeInt(m.vocabSize); out.writeInt(m.dim);
+            for (float v : m.tokenEmb.W.data) out.writeFloat(v);
+            for (float v : m.posEmb.W.data) out.writeFloat(v);
+        }
+    }
+}
+```
+
+```java
+// DOSYA 113: app/src/main/java/com/jai/app/trainer/PtqCalibrator.java
+package com.jai.app.trainer;
+public class PtqCalibrator {
+    public float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+    public void observe(float v) { if (v < min) min = v; if (v > max) max = v; }
+}
+```
+
+```java
+// DOSYA 114: app/src/main/java/com/jai/app/trainer/PtqWriter.java
+package com.jai.app.trainer;
+import com.jai.app.model.Int8Tensor;
+import com.jai.app.model.Matrix;
+import java.io.DataOutputStream;
+import java.io.FileOutputStream;
+public class PtqWriter {
+    public static void writeMatrix(DataOutputStream out, Matrix m) throws Exception {
+        Int8Tensor t = Int8Tensor.quantize(m);
+        out.writeInt(t.rows); out.writeInt(t.cols); out.writeFloat(t.scale); out.writeInt(t.zeroPoint); out.write(t.data);
+    }
+}
+```
+
+```java
+// DOSYA 115: app/src/main/java/com/jai/app/trainer/PtqReader.java
+package com.jai.app.trainer;
+import com.jai.app.model.Matrix;
+import com.jai.app.model.TransformerModel;
+import java.io.DataInputStream;
+import java.io.InputStream;
+public class PtqReader {
+    public static TransformerModel read(InputStream in) throws Exception {
+        return new TransformerModel(16000, 576, 10, 8, 2304, 1024);
+    }
+}
+```
+
+```java
+// DOSYA 116: app/src/main/java/com/jai/app/model/ModelPaths.java
+package com.jai.app.model;
+public class ModelPaths {
+    public static final String MODEL_INT8 = "model_int8.bin";
+    public static final String VOCAB = "vocab.txt";
+    public static final String SR_MODEL = "sr_int8.bin";
+}
+```
+
+```java
+// DOSYA 117: app/src/main/java/com/jai/app/model/InferenceConfig.java
+package com.jai.app.model;
+public class InferenceConfig {
+    public static final int VOCAB_SIZE = 16000;
+    public static final int DIM = 576;
+    public static final int NUM_LAYERS = 10;
+    public static final int NUM_HEADS = 8;
+    public static final int FFN_HIDDEN = 2304;
+    public static final int MAX_SEQ = 1024;
+}
+```
+
+```java
+// DOSYA 118: app/src/main/java/com/jai/app/model/ModelStats.java
+package com.jai.app.model;
+public class ModelStats {
+    public static int paramCount(int vocab, int dim, int layers, int ffn) {
+        return (vocab * dim) + (dim * dim * 4 * layers) + (dim * ffn * 2 * layers) + (dim * vocab);
+    }
+}
+```
+
+```java
+// DOSYA 119: app/src/main/java/com/jai/app/model/ChatTemplate.java
+package com.jai.app.model;
+public class ChatTemplate {
+    public static String format(String user, String assistant) {
+        return "<|user|>" + user + "<|assistant|>" + (assistant != null ? assistant : "");
+    }
+}
+```
+
+```java
+// DOSYA 120: app/src/main/java/com/jai/app/model/ExecutionPolicy.java
+package com.jai.app.model;
+public class ExecutionPolicy {
+    public final int maxTools; public final boolean verify;
+    public ExecutionPolicy(int t, boolean v) { maxTools = t; verify = v; }
+    public static ExecutionPolicy forMode(String mode, String effort) {
+        if ("FLASH".equals(mode)) return new ExecutionPolicy(1, false);
+        if ("DEEP".equals(effort)) return new ExecutionPolicy(5, true);
+        return new ExecutionPolicy(2, true);
+    }
+}
+```
+
+```java
+// DOSYA 121: app/src/main/java/com/jai/app/model/ModelState.java
+package com.jai.app.model;
+public enum ModelState { NOT_TRAINED, LOADING, READY, ERROR }
+```
+
+```java
+// DOSYA 122: app/src/test/java/com/jai/app/ExampleUnitTest.java
+package com.jai.app;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class ExampleUnitTest {
+    @Test public void addition_isCorrect() { assertEquals(4, 2 + 2); }
+}
+```
+
+```java
+// DOSYA 123: app/src/test/java/com/jai/app/ExpressionTest.java
+package com.jai.app;
+import com.jai.app.brain.ExpressionEvaluator;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class ExpressionTest {
+    @Test public void testEval() { assertEquals(84.0, ExpressionEvaluator.eval("12*(3+4)"), 0.01); }
+}
+```
+
+```java
+// DOSYA 124: app/src/test/java/com/jai/app/ModelTest.java
+package com.jai.app;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class ModelTest {
+    @Test public void testMul() {
+        Matrix a = new Matrix(2, 2); Matrix b = new Matrix(2, 2);
+        Matrix c = Matrix.mul(a, b); assertEquals(2, c.rows);
+    }
+}
+```
+
+```java
+// DOSYA 125: app/src/test/java/com/jai/app/CodeLabTest.java
+package com.jai.app;
+import com.jai.app.codelab.CodeLabEngine;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class CodeLabTest {
+    @Test public void testJson() { assertTrue(new CodeLabEngine().analyze("{}", "json").ok); }
+}
+```
+
+```java
+// DOSYA 126: app/src/test/java/com/jai/app/DataTest.java
+package com.jai.app;
+import com.jai.app.data.Message;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class DataTest {
+    @Test public void testMsg() { assertEquals("test", new Message(1,"user","test","F","M",false,"OK",null).content); }
+}
+```
+
+```java
+// DOSYA 127: app/src/test/java/com/jai/app/Int8TensorTest.java
+package com.jai.app;
+import com.jai.app.model.Int8Tensor;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class Int8TensorTest {
+    @Test public void testQuant() {
+        Matrix m = new Matrix(2, 2); m.data[0] = 1f; m.data[1] = 2f;
+        Int8Tensor t = Int8Tensor.quantize(m); assertNotNull(t.dequantize());
+    }
+}
+```
+
+```java
+// DOSYA 128: app/src/test/java/com/jai/app/MatrixTest.java
+package com.jai.app;
+import com.jai.app.model.Matrix;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class MatrixTest {
+    @Test public void testSoftmax() {
+        Matrix x = new Matrix(1, 3); x.data[0] = 1; x.data[1] = 2; x.data[2] = 3;
+        Matrix y = Matrix.softmax(x); assertEquals(1.0f, y.data[0] + y.data[1] + y.data[2], 0.001f);
+    }
+}
+```
+
+```java
+// DOSYA 129: app/src/test/java/com/jai/app/SamplerTest.java
+package com.jai.app;
+import com.jai.app.model.Sampler;
+import org.junit.Test;
+import static org.junit.Assert.*;
+public class SamplerTest {
+    @Test public void testSample() {
+        float[] l = {1f, 5f, 2f}; assertEquals(1, new Sampler().sample(l));
+    }
+}
+```
+
+```json
+// DOSYA 130: colab/train_on_colab.ipynb
+{"cells":[{"cell_type":"code","source":["!pip install torch transformers datasets tokenizers\nimport torch\nprint('Ready')"]}],"metadata":{},"nbformat":4,"nbformat_minor":5}
+```
+
+```xml
+<!-- DOSYA 131: server/pom.xml -->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.jai</groupId>
+    <artifactId>server</artifactId>
+    <version>1.0</version>
+    <dependencies>
+        <dependency><groupId>org.java-websocket</groupId><artifactId>Java-WebSocket</artifactId><version>1.5.4</version></dependency>
+        <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>3.44.0.0</version></dependency>
+        <dependency><groupId>org.json</groupId><artifactId>json</artifactId><version>20231013</version></dependency>
+    </dependencies>
+</project>
+```
+
+```java
+// DOSYA 132: server/src/main/java/com/jai/server/MessagingServer.java
+package com.jai.server;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
+import java.net.InetSocketAddress;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+public class MessagingServer extends WebSocketServer {
+    private final Map<String, WebSocket> online = new ConcurrentHashMap<>();
+    public MessagingServer(int port) { super(new InetSocketAddress(port)); }
+    @Override public void onOpen(WebSocket c, ClientHandshake h) {
+        String q = h.getResourceDescriptor(); int i = q.indexOf("user=");
+        if (i >= 0) online.put(q.substring(i + 5), c);
+    }
+    @Override public void onClose(WebSocket c, int code, String reason, boolean remote) { online.values().remove(c); }
+    @Override public void onMessage(WebSocket c, String msg) {
+        try {
+            org.json.JSONObject j = new org.json.JSONObject(msg);
+            if (j.has("to")) {
+                WebSocket t = online.get(j.getString("to"));
+                if (t != null && t.isOpen()) t.send(msg);
+            }
+        } catch (Exception ignored) {}
+    }
+    @Override public void onError(WebSocket c, Exception ex) {}
+    @Override public void onStart() {}
+    public static void main(String[] a) { new MessagingServer(8887).start(); }
+}
+```
+
+```java
+// DOSYA 133: server/src/main/java/com/jai/server/UserStore.java
+package com.jai.server;
+import java.sql.*;
+public class UserStore {
+    public UserStore(String path) throws Exception { DriverManager.getConnection("jdbc:sqlite:" + path).createStatement().execute("CREATE TABLE IF NOT EXISTS users (code TEXT PRIMARY KEY)"); }
+}
+```
+
+```java
+// DOSYA 134: server/src/main/java/com/jai/server/MessageStore.java
+package com.jai.server;
+import java.sql.*;
+public class MessageStore {
+    public MessageStore(String path) throws Exception { DriverManager.getConnection("jdbc:sqlite:" + path).createStatement().execute("CREATE TABLE IF NOT EXISTS msgs (id INTEGER PRIMARY KEY, body TEXT)"); }
+}
+```
+
+```markdown
+<!-- DOSYA 135: server/README.md -->
+# Server
+Run `MessagingServer.main()` on port 8887.
+```
+
+```xml
+<!-- DOSYA 136: app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/jai_bg"/><foreground android:drawable="@drawable/ic_launcher"/></adaptive-icon>
+```
+
+```xml
+<!-- DOSYA 137: app/src/main/res/values/dimens.xml -->
+<resources><dimen name="pad">16dp</dimen></resources>
+```
+
+```xml
+<!-- DOSYA 138: app/src/main/res/values/styles.xml -->
+<resources><style name="AppTheme" parent="Theme.Jai"/></resources>
+```
+
+```xml
+<!-- DOSYA 139: app/src/main/res/xml/shortcuts.xml -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android" />
+```
+
+```xml
+<!-- DOSYA 140: app/src/main/res/layout/item_video.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content"><TextView android:id="@+id/txtName" android:layout_width="wrap_content" android:layout_height="wrap_content"/></LinearLayout>
+```
+
+```xml
+<!-- DOSYA 141: app/src/main/res/layout/item_image.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content"><ImageView android:id="@+id/imgThumb" android:layout_width="match_parent" android:layout_height="150dp"/></LinearLayout>
+```
+
+```java
+// DOSYA 142: app/src/main/java/com/jai/app/model/PositionalEncoding.java
+package com.jai.app.model;
+public class PositionalEncoding { }
+```
+
+```java
+// DOSYA 143: app/src/main/java/com/jai/app/model/AttentionMask.java
+package com.jai.app.model;
+public class AttentionMask { }
+```
+
+```java
+// DOSYA 144: app/src/main/java/com/jai/app/Main.java
+package com.jai.app;
+public class Main { public static void main(String[] args) {} }
+```

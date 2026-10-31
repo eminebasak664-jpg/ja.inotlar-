@@ -1,0 +1,779 @@
+```groovy
+// DOSYA 1: settings.gradle
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "jai"
+include ':app'
+```
+
+```groovy
+// DOSYA 2: build.gradle
+plugins { id 'com.android.application' version '8.2.2' apply false }
+```
+
+```properties
+# DOSYA 3: gradle.properties
+org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+android.enableJetifier=true
+```
+
+```groovy
+// DOSYA 4: app/build.gradle
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.jai.app'; compileSdk 34
+    defaultConfig { applicationId "com.jai.app"; minSdk 24; targetSdk 34; versionCode 1; versionName "1.0"; testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner" }
+    buildTypes { release { minifyEnabled false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.work:work-runtime:2.9.0'
+    implementation 'androidx.room:room-runtime:2.6.1'
+    annotationProcessor 'androidx.room:room-compiler:2.6.1'
+    implementation 'org.jsoup:jsoup:1.17.2'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
+```
+
+```proguard
+# DOSYA 5: app/proguard-rules.pro
+-keep class com.jai.app.data.** { *; }
+-keep class com.jai.app.model.** { *; }
+```
+
+```yaml
+# DOSYA 6: .github/workflows/build.yml
+name: Build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: '17', distribution: 'temurin' }
+      - uses: android-actions/setup-android@v3
+      - run: gradle wrapper --gradle-version 8.2
+      - run: chmod +x gradlew
+      - run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with: { name: apk, path: app/build/outputs/apk/debug/*.apk }
+```
+
+```text
+# DOSYA 7: .gitignore
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+```
+
+```markdown
+# DOSYA 8: README.md
+# Ja.i
+```
+
+```xml
+<!-- DOSYA 9: app/src/main/AndroidManifest.xml -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <application android:name=".JaiApp" android:allowBackup="false" android:icon="@drawable/ic_launcher" android:label="Ja.i" android:theme="@style/Theme.Jai">
+        <activity android:name=".ui.RegisterActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".ui.MainActivity" />
+        <activity android:name=".ui.VideoActivity" />
+        <activity android:name=".ui.AdminActivity" />
+    </application>
+</manifest>
+```
+
+```xml
+<!-- DOSYA 10: app/src/main/res/values/colors.xml -->
+<resources>
+    <color name="jai_bg">#0E0B14</color>
+    <color name="jai_surface">#1A1520</color>
+    <color name="jai_primary">#A475F6</color>
+    <color name="jai_text">#F2ECFF</color>
+</resources>
+```
+
+```xml
+<!-- DOSYA 11: app/src/main/res/values/strings.xml -->
+<resources>
+    <string name="app_name">Ja.i</string>
+</resources>
+```
+
+```xml
+<!-- DOSYA 12: app/src/main/res/values/themes.xml -->
+<resources>
+    <style name="Theme.Jai" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/jai_primary</item>
+        <item name="android:colorBackground">@color/jai_bg</item>
+        <item name="android:textColorPrimary">@color/jai_text</item>
+    </style>
+</resources>
+```
+
+```xml
+<!-- DOSYA 13: app/src/main/res/xml/file_paths.xml -->
+<paths><files-path name="files" path="." /></paths>
+```
+
+```xml
+<!-- DOSYA 14: app/src/main/res/xml/backup_rules.xml -->
+<full-backup-content><exclude domain="database" path="." /></full-backup-content>
+```
+
+```xml
+<!-- DOSYA 15: app/src/main/res/drawable/ic_launcher.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#0E0B14" android:pathData="M0,0h108v108h-108z"/></vector>
+```
+
+```xml
+<!-- DOSYA 16: app/src/main/res/drawable/bg_user_bubble.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"><solid android:color="#2C1F3D"/><corners android:radius="16dp"/></shape>
+```
+
+```xml
+<!-- DOSYA 17: app/src/main/res/drawable/bg_nova_bubble.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"><solid android:color="#1C1526"/><corners android:radius="16dp"/></shape>
+```
+
+```xml
+<!-- DOSYA 18: app/src/main/res/drawable/bg_input.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"><solid android:color="#241C2E"/><corners android:radius="12dp"/></shape>
+```
+
+```xml
+<!-- DOSYA 19: app/src/main/res/drawable/ic_admin.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#FFFFFF" android:pathData="M12,8c1.1,0 2,0.9 2,2s-0.9,2 -2,2s-2,-0.9 -2,-2S10.9,8 12,8z"/></vector>
+```
+
+```xml
+<!-- DOSYA 20: app/src/main/res/layout/activity_register.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="24dp" android:background="@color/jai_bg">
+    <EditText android:id="@+id/inputName" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="İsim" />
+    <EditText android:id="@+id/inputSurname" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Soyisim" />
+    <EditText android:id="@+id/inputEmail" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="E-posta" />
+    <EditText android:id="@+id/inputAge" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Yaş" android:inputType="number" />
+    <Button android:id="@+id/btnRegister" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Kayıt Ol" />
+    <TextView android:id="@+id/txtAdmin" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Admin" />
+</LinearLayout>
+```
+
+```xml
+<!-- DOSYA 21: app/src/main/res/layout/activity_main.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@color/jai_bg">
+    <TextView android:id="@+id/txtModelState" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Yükleniyor" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <EditText android:id="@+id/input" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" />
+        <Button android:id="@+id/btnSend" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Gönder" />
+    </LinearLayout>
+</LinearLayout>
+```
+
+```xml
+<!-- DOSYA 22: app/src/main/res/layout/item_message.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+    <TextView android:id="@+id/text" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+</LinearLayout>
+```
+
+```xml
+<!-- DOSYA 23: app/src/main/res/layout/activity_admin.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/listUsers" android:layout_width="match_parent" android:layout_height="wrap_content" />
+</LinearLayout>
+```
+
+```xml
+<!-- DOSYA 24: app/src/main/res/layout/item_user.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+    <TextView android:id="@+id/txtName" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    <TextView android:id="@+id/txtEmail" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+</LinearLayout>
+```
+
+```java
+// DOSYA 25: app/src/main/java/com/jai/app/data/Message.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "messages")
+public class Message {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public long conversationId; public String role; public String content;
+    public String mode; public String effort; public boolean searchOn;
+    public long createdAt; public String status; public String traceJson;
+    public Message() {}
+    public Message(long c, String r, String co, String m, String e, boolean s, String st, String t) {
+        this.conversationId=c; this.role=r; this.content=co; this.mode=m; this.effort=e; this.searchOn=s; this.status=st; this.traceJson=t; this.createdAt=System.currentTimeMillis();
+    }
+}
+```
+
+```java
+// DOSYA 26: app/src/main/java/com/jai/app/data/Conversation.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "conversations")
+public class Conversation {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public String title; public long createdAt; public long updatedAt; public boolean archived;
+    public Conversation() {}
+    public Conversation(String t) { this.title=t; this.createdAt=System.currentTimeMillis(); this.updatedAt=this.createdAt; }
+}
+```
+
+```java
+// DOSYA 27: app/src/main/java/com/jai/app/data/User.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.Index;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "users", indices = {@Index(value = "email", unique = true), @Index(value = "name", unique = true)})
+public class User {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public String name; public String surname; public String email; public int age; public long createdAt; public String userCode;
+    public User() {}
+    public User(String n, String s, String e, int a, String c) { name=n; surname=s; email=e; age=a; userCode=c; createdAt=System.currentTimeMillis(); }
+}
+```
+
+```java
+// DOSYA 28: app/src/main/java/com/jai/app/data/KnowledgeEntity.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "knowledge")
+public class KnowledgeEntity {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public String topic; public String content; public String source; public long fetchedAt;
+    public KnowledgeEntity() {}
+    public KnowledgeEntity(String t, String c, String s) { topic=t; content=c; source=s; fetchedAt=System.currentTimeMillis(); }
+}
+```
+
+```java
+// DOSYA 29: app/src/main/java/com/jai/app/data/LearningTaskEntity.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "learning_tasks")
+public class LearningTaskEntity {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public String topic; public String status; public int priority;
+    public LearningTaskEntity() {}
+    public LearningTaskEntity(String t, int p) { topic=t; status="PENDING"; priority=p; }
+}
+```
+
+```java
+// DOSYA 30: app/src/main/java/com/jai/app/data/VideoJobEntity.java
+package com.jai.app.data;
+import androidx.room.Entity;
+import androidx.room.PrimaryKey;
+@Entity(tableName = "video_jobs")
+public class VideoJobEntity {
+    @PrimaryKey(autoGenerate = true) public long id;
+    public String prompt; public int durationSec; public int quality; public String status;
+    public int framesDone; public int framesTotal; public String outputPath;
+    public VideoJobEntity() {}
+    public VideoJobEntity(String p, int d, int q) { prompt=p; durationSec=d; quality=q; status="PENDING"; framesTotal=d*24; }
+}
+```
+
+```java
+// DOSYA 31: app/src/main/java/com/jai/app/data/MessageDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface MessageDao {
+    @Insert long insert(Message m);
+    @Query("SELECT * FROM messages WHERE conversationId = :cid ORDER BY createdAt ASC") List<Message> forConversation(long cid);
+    @Query("SELECT * FROM messages WHERE conversationId = :cid AND role = 'user' ORDER BY createdAt DESC LIMIT :limit") List<Message> recentUserMessages(long cid, int limit);
+}
+```
+
+```java
+// DOSYA 32: app/src/main/java/com/jai/app/data/ConversationDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface ConversationDao {
+    @Insert long insert(Conversation c);
+    @Query("SELECT * FROM conversations WHERE archived = 0 ORDER BY updatedAt DESC") List<Conversation> all();
+    @Query("UPDATE conversations SET updatedAt = :ts WHERE id = :id") void touch(long id, long ts);
+    @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1") Conversation byId(long id);
+}
+```
+
+```java
+// DOSYA 33: app/src/main/java/com/jai/app/data/UserDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface UserDao {
+    @Insert long insert(User u);
+    @Query("SELECT * FROM users ORDER BY createdAt DESC") List<User> all();
+    @Query("SELECT * FROM users WHERE email = :e LIMIT 1") User byEmail(String e);
+    @Query("SELECT * FROM users WHERE name = :n LIMIT 1") User byName(String n);
+}
+```
+
+```java
+// DOSYA 34: app/src/main/java/com/jai/app/data/KnowledgeDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface KnowledgeDao {
+    @Insert long insert(KnowledgeEntity k);
+    @Query("SELECT * FROM knowledge WHERE LOWER(topic) LIKE :q OR LOWER(content) LIKE :q LIMIT 20") List<KnowledgeEntity> search(String q);
+}
+```
+
+```java
+// DOSYA 35: app/src/main/java/com/jai/app/data/LearningTaskDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface LearningTaskDao {
+    @Insert long insert(LearningTaskEntity t);
+    @Query("SELECT * FROM learning_tasks ORDER BY priority DESC, createdAt DESC") List<LearningTaskEntity> all();
+}
+```
+
+```java
+// DOSYA 36: app/src/main/java/com/jai/app/data/VideoJobDao.java
+package com.jai.app.data;
+import androidx.room.Dao;
+import androidx.room.Insert;
+import androidx.room.Update;
+import androidx.room.Query;
+import java.util.List;
+@Dao public interface VideoJobDao {
+    @Insert long insert(VideoJobEntity j);
+    @Update void update(VideoJobEntity j);
+    @Query("SELECT * FROM video_jobs ORDER BY createdAt DESC") List<VideoJobEntity> all();
+    @Query("SELECT * FROM video_jobs WHERE status = 'PENDING' LIMIT 1") VideoJobEntity nextPending();
+}
+```
+
+```java
+// DOSYA 37: app/src/main/java/com/jai/app/data/AppDatabase.java
+package com.jai.app.data;
+import android.content.Context;
+import androidx.room.Database;
+import androidx.room.Room;
+import androidx.room.RoomDatabase;
+@Database(entities = {Conversation.class, Message.class, User.class, KnowledgeEntity.class, LearningTaskEntity.class, VideoJobEntity.class}, version = 1, exportSchema = false)
+public abstract class AppDatabase extends RoomDatabase {
+    private static volatile AppDatabase INSTANCE;
+    public abstract ConversationDao conversations();
+    public abstract MessageDao messages();
+    public abstract UserDao users();
+    public abstract KnowledgeDao knowledge();
+    public abstract LearningTaskDao learningTasks();
+    public abstract VideoJobDao videoJobs();
+    public static AppDatabase get(Context ctx) {
+        if (INSTANCE == null) {
+            synchronized (AppDatabase.class) {
+                if (INSTANCE == null) {
+                    INSTANCE = Room.databaseBuilder(ctx.getApplicationContext(), AppDatabase.class, "jai.db").fallbackToDestructiveMigration().build();
+                }
+            }
+        }
+        return INSTANCE;
+    }
+}
+```
+
+```java
+// DOSYA 38: app/src/main/java/com/jai/app/model/Matrix.java
+package com.jai.app.model;
+public class Matrix {
+    public final int rows, cols;
+    public final float[] data;
+    public Matrix(int r, int c) { this.rows = r; this.cols = c; this.data = new float[r * c]; }
+    public Matrix(int r, int c, float[] d) { this.rows = r; this.cols = c; this.data = d; }
+    public float get(int r, int c) { return data[r * cols + c]; }
+    public void set(int r, int c, float v) { data[r * cols + c] = v; }
+    public static Matrix mul(Matrix A, Matrix B) {
+        if (A.cols != B.rows) throw new IllegalArgumentException("Boyut uyumsuz");
+        Matrix C = new Matrix(A.rows, B.cols);
+        for (int i = 0; i < A.rows; i++) {
+            for (int k = 0; k < A.cols; k++) {
+                float a = A.data[i * A.cols + k];
+                if (a == 0) continue;
+                for (int j = 0; j < B.cols; j++) C.data[i * C.cols + j] += a * B.data[k * B.cols + j];
+            }
+        }
+        return C;
+    }
+    public Matrix transpose() {
+        Matrix T = new Matrix(cols, rows);
+        for (int r = 0; r < rows; r++) for (int c = 0; c < cols; c++) T.data[c * rows + r] = data[r * cols + c];
+        return T;
+    }
+    public Matrix add(Matrix B) {
+        Matrix C = new Matrix(rows, cols);
+        for (int i = 0; i < data.length; i++) C.data[i] = data[i] + B.data[i];
+        return C;
+    }
+    public static Matrix softmax(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float max = Float.NEGATIVE_INFINITY;
+            for (int j = 0; j < X.cols; j++) if (X.data[row + j] > max) max = X.data[row + j];
+            float sum = 0;
+            for (int j = 0; j < X.cols; j++) { float e = (float) Math.exp(X.data[row + j] - max); Y.data[row + j] = e; sum += e; }
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] /= sum;
+        }
+        return Y;
+    }
+    public static Matrix layerNorm(Matrix X, float[] gamma, float[] beta, float eps) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.rows; i++) {
+            int row = i * X.cols; float mean = 0;
+            for (int j = 0; j < X.cols; j++) mean += X.data[row + j];
+            mean /= X.cols;
+            float var = 0;
+            for (int j = 0; j < X.cols; j++) { float d = X.data[row + j] - mean; var += d * d; }
+            var /= X.cols; float inv = (float) (1.0 / Math.sqrt(var + eps));
+            for (int j = 0; j < X.cols; j++) Y.data[row + j] = (X.data[row + j] - mean) * inv * gamma[j] + beta[j];
+        }
+        return Y;
+    }
+    public static Matrix gelu(Matrix X) {
+        Matrix Y = new Matrix(X.rows, X.cols);
+        for (int i = 0; i < X.data.length; i++) { float x = X.data[i]; Y.data[i] = 0.5f * x * (1f + (float) Math.tanh(0.7978845608f * (x + 0.044715f * x * x * x))); }
+        return Y;
+    }
+}
+```
+
+```java
+// DOSYA 39: app/src/main/java/com/jai/app/model/Int8Tensor.java
+package com.jai.app.model;
+public class Int8Tensor {
+    public final int rows, cols;
+    public final byte[] data;
+    public final float scale;
+    public final int zeroPoint;
+    public Int8Tensor(int r, int c, byte[] d, float s, int zp) { rows = r; cols = c; data = d; scale = s; zeroPoint = zp; }
+    public Matrix dequantize() {
+        Matrix m = new Matrix(rows, cols);
+        for (int i = 0; i < data.length; i++) m.data[i] = ((data[i] & 0xFF) - zeroPoint) * scale;
+        return m;
+    }
+    public static Int8Tensor quantize(Matrix m) {
+        float min = Float.MAX_VALUE, max = -Float.MAX_VALUE;
+        for (float v : m.data) { if (v < min) min = v; if (v > max) max = v; }
+        float scale = (max - min) / 255f; if (scale == 0) scale = 1e-8f;
+        int zp = Math.round(-min / scale); if (zp < 0) zp = 0; if (zp > 255) zp = 255;
+        byte[] q = new byte[m.data.length];
+        for (int i = 0; i < m.data.length; i++) { int v = Math.round(m.data[i] / scale) + zp; if (v < 0) v = 0; if (v > 255) v = 255; q[i] = (byte) v; }
+        return new Int8Tensor(m.rows, m.cols, q, scale, zp);
+    }
+}
+```
+
+```java
+// DOSYA 40: app/src/main/java/com/jai/app/model/LayerNorm.java
+package com.jai.app.model;
+public class LayerNorm {
+    public final int dim;
+    public float[] gamma, beta;
+    public final float eps = 1e-5f;
+    public LayerNorm(int dim) { this.dim = dim; this.gamma = new float[dim]; this.beta = new float[dim]; for (int i = 0; i < dim; i++) gamma[i] = 1f; }
+    public Matrix forward(Matrix X) { return Matrix.layerNorm(X, gamma, beta, eps); }
+}
+```
+
+```java
+// DOSYA 41: app/src/main/java/com/jai/app/model/Dense.java
+package com.jai.app.model;
+public class Dense {
+    public final int inDim, outDim;
+    public Matrix W;
+    public float[] b;
+    public Dense(int inDim, int outDim) { this.inDim = inDim; this.outDim = outDim; this.W = new Matrix(outDim, inDim); this.b = new float[outDim]; }
+    public Matrix forward(Matrix X) {
+        Matrix Y = Matrix.mul(X, W.transpose());
+        for (int i = 0; i < Y.rows; i++) for (int j = 0; j < outDim; j++) Y.data[i * outDim + j] += b[j];
+        return Y;
+    }
+}
+```
+
+```java
+// DOSYA 42: app/src/main/java/com/jai/app/model/Embedding.java
+package com.jai.app.model;
+public class Embedding {
+    public final int vocabSize, dim;
+    public Matrix W;
+    public Embedding(int vocabSize, int dim) { this.vocabSize = vocabSize; this.dim = dim; this.W = new Matrix(vocabSize, dim); }
+    public Matrix forward(int[] tokenIds) {
+        Matrix Y = new Matrix(tokenIds.length, dim);
+        for (int i = 0; i < tokenIds.length; i++) {
+            int id = tokenIds[i]; if (id < 0 || id >= vocabSize) id = 0;
+            System.arraycopy(W.data, id * dim, Y.data, i * dim, dim);
+        }
+        return Y;
+    }
+}
+```
+
+```java
+// DOSYA 43: app/src/main/java/com/jai/app/model/MultiHeadAttention.java
+package com.jai.app.model;
+public class MultiHeadAttention {
+    public final int dim, numHeads, headDim;
+    public final Dense qProj, kProj, vProj, oProj;
+    public MultiHeadAttention(int dim, int numHeads) {
+        this.dim = dim; this.numHeads = numHeads; this.headDim = dim / numHeads;
+        this.qProj = new Dense(dim, dim); this.kProj = new Dense(dim, dim); this.vProj = new Dense(dim, dim); this.oProj = new Dense(dim, dim);
+    }
+    public Matrix forward(Matrix X) {
+        int seq = X.rows;
+        Matrix Q = qProj.forward(X); Matrix K = kProj.forward(X); Matrix V = vProj.forward(X);
+        float scale = (float) (1.0 / Math.sqrt(headDim));
+        Matrix out = new Matrix(seq, dim);
+        for (int h = 0; h < numHeads; h++) {
+            int off = h * headDim;
+            Matrix scores = new Matrix(seq, seq);
+            for (int i = 0; i < seq; i++) {
+                for (int j = 0; j < seq; j++) {
+                    float s = 0;
+                    for (int d = 0; d < headDim; d++) s += Q.data[i * dim + off + d] * K.data[j * dim + off + d];
+                    scores.data[i * seq + j] = s * scale;
+                }
+            }
+            Matrix attn = Matrix.softmax(scores);
+            for (int i = 0; i < seq; i++) {
+                for (int d = 0; d < headDim; d++) {
+                    float s = 0;
+                    for (int j = 0; j < seq; j++) s += attn.data[i * seq + j] * V.data[j * dim + off + d];
+                    out.data[i * dim + off + d] = s;
+                }
+            }
+        }
+        return oProj.forward(out);
+    }
+}
+```
+
+```java
+// DOSYA 44: app/src/main/java/com/jai/app/model/FeedForward.java
+package com.jai.app.model;
+public class FeedForward {
+    public final Dense fc1, fc2;
+    public FeedForward(int dim, int hidden) { this.fc1 = new Dense(dim, hidden); this.fc2 = new Dense(hidden, dim); }
+    public Matrix forward(Matrix X) { return fc2.forward(Matrix.gelu(fc1.forward(X))); }
+}
+```
+
+```java
+// DOSYA 45: app/src/main/java/com/jai/app/model/TransformerBlock.java
+package com.jai.app.model;
+public class TransformerBlock {
+    public final LayerNorm ln1, ln2;
+    public final MultiHeadAttention attn;
+    public final FeedForward ffn;
+    public TransformerBlock(int dim, int heads, int ffnHidden) {
+        this.ln1 = new LayerNorm(dim); this.attn = new MultiHeadAttention(dim, heads);
+        this.ln2 = new LayerNorm(dim); this.ffn = new FeedForward(dim, ffnHidden);
+    }
+    public Matrix forward(Matrix X) {
+        Matrix a = ln1.forward(X); Matrix attnOut = attn.forward(a); Matrix x1 = X.add(attnOut);
+        Matrix b = ln2.forward(x1); Matrix ffnOut = ffn.forward(b); return x1.add(ffnOut);
+    }
+}
+```
+
+```java
+// DOSYA 46: app/src/main/java/com/jai/app/model/TransformerModel.java
+package com.jai.app.model;
+public class TransformerModel {
+    public final int vocabSize, dim, numLayers, numHeads, ffnHidden, maxSeq;
+    public final Embedding tokenEmb, posEmb;
+    public final TransformerBlock[] blocks;
+    public final LayerNorm finalNorm;
+    public final Dense lmHead;
+    public TransformerModel(int vocabSize, int dim, int numLayers, int numHeads, int ffnHidden, int maxSeq) {
+        this.vocabSize = vocabSize; this.dim = dim; this.numLayers = numLayers; this.numHeads = numHeads; this.ffnHidden = ffnHidden; this.maxSeq = maxSeq;
+        this.tokenEmb = new Embedding(vocabSize, dim); this.posEmb = new Embedding(maxSeq, dim);
+        this.blocks = new TransformerBlock[numLayers];
+        for (int i = 0; i < numLayers; i++) blocks[i] = new TransformerBlock(dim, numHeads, ffnHidden);
+        this.finalNorm = new LayerNorm(dim); this.lmHead = new Dense(dim, vocabSize);
+    }
+    public Matrix forward(int[] tokenIds) {
+        int seq = Math.min(tokenIds.length, maxSeq);
+        Matrix X = tokenEmb.forward(tokenIds);
+        int[] positions = new int[seq]; for (int i = 0; i < seq; i++) positions[i] = i;
+        X = X.add(posEmb.forward(positions));
+        for (TransformerBlock b : blocks) X = b.forward(X);
+        X = finalNorm.forward(X);
+        return lmHead.forward(X);
+    }
+}
+```
+
+```java
+// DOSYA 47: app/src/main/java/com/jai/app/model/BpeTokenizer.java
+package com.jai.app.model;
+import android.content.Context;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.HashMap;
+import java.util.Map;
+public class BpeTokenizer {
+    private final Map<String, Integer> vocab = new HashMap<>();
+    private final Map<Integer, String> reverse = new HashMap<>();
+    public BpeTokenizer(Context ctx) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(ctx.getAssets().open("vocab.txt")))) {
+            String line; int i = 0;
+            while ((line = r.readLine()) != null) { vocab.put(line, i); reverse.put(i, line); i++; }
+        } catch (Exception e) {
+            for (int i = 0; i < 256; i++) { vocab.put("b" + i, i); reverse.put(i, "b" + i); }
+        }
+    }
+    public int[] encode(String text) {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int[] ids = new int[bytes.length];
+        for (int i = 0; i < bytes.length; i++) ids[i] = vocab.getOrDefault("b" + (bytes[i] & 0xFF), 0);
+        return ids;
+    }
+    public String decode(int[] ids) {
+        StringBuilder sb = new StringBuilder();
+        for (int id : ids) {
+            String tok = reverse.get(id);
+            if (tok != null && tok.startsWith("b")) { try { sb.append((char) Integer.parseInt(tok.substring(1))); } catch (Exception ignored) {} }
+        }
+        return sb.toString();
+    }
+}
+```
+
+```java
+// DOSYA 48: app/src/main/java/com/jai/app/model/Sampler.java
+package com.jai.app.model;
+import java.util.Random;
+public class Sampler {
+    private final Random rng = new Random();
+    public float temperature = 0.8f;
+    public int sample(float[] logits) {
+        int max = 0;
+        for (int i = 1; i < logits.length; i++) if (logits[i] > logits[max]) max = i;
+        return max;
+    }
+}
+```
+
+```java
+// DOSYA 49: app/src/main/java/com/jai/app/model/InferenceRuntime.java
+package com.jai.app.model;
+import android.content.Context;
+import java.io.InputStream;
+public class InferenceRuntime {
+    public TransformerModel model;
+    public BpeTokenizer tokenizer;
+    private String state = "NOT_TRAINED";
+    public void init(Context ctx) {
+        tokenizer = new BpeTokenizer(ctx);
+        model = new TransformerModel(16000, 576, 10, 8, 2304, 1024);
+        try (InputStream in = ctx.getAssets().open("model_int8.bin")) {
+            state = "READY";
+        } catch (Exception e) { state = "NOT_TRAINED"; }
+    }
+    public String getState() { return state; }
+    public boolean isReady() { return state.equals("READY"); }
+    public String generate(String prompt, int maxTokens) {
+        if (!isReady()) return "Model yüklenmedi: " + state;
+        int[] ids = tokenizer.encode(prompt);
+        StringBuilder out = new StringBuilder();
+        Sampler sampler = new Sampler();
+        int[] ctxIds = new int[Math.min(ids.length, model.maxSeq)];
+        for (int i = 0; i < ctxIds.length; i++) ctxIds[i] = ids[ids.length - ctxIds.length + i];
+        for (int step = 0; step < maxTokens; step++) {
+            Matrix logits = model.forward(ctxIds);
+            int last = logits.rows - 1;
+            float[] lastLogits = new float[logits.cols];
+            for (int i = 0; i < logits.cols; i++) lastLogits[i] = logits.data[last * logits.cols + i];
+            int nextTok = sampler.sample(lastLogits);
+            if (nextTok == 2) break;
+            out.append(tokenizer.decode(new int[]{nextTok}));
+            int[] newCtx = new int[Math.min(ctxIds.length + 1, model.maxSeq)];
+            int skip = Math.max(0, ctxIds.length + 1 - model.maxSeq);
+            for (int i = 0; i < ctxIds.length - skip; i++) newCtx[i] = ctxIds[i + skip];
+            newCtx[newCtx.length - 1] = nextTok;
+            ctxIds = newCtx;
+        }
+        return out.toString();
+    }
+}
+```
+
+```java
+// DOSYA 50: app/src/main/java/com/jai/app/brain/BrainEngine.java
+package com.jai.app.brain;
+import com.jai.app.model.InferenceRuntime;
+public class BrainEngine {
+    private final InferenceRuntime runtime;
+    public BrainEngine(InferenceRuntime runtime) { this.runtime = runtime; }
+    public String respond(String input) {
+        if (runtime.isReady()) return runtime.generate(input, 128);
+        return "Bilmiyorum. Model henüz eğitilmedi. Lütfen Colab'da modeli eğitip model_int8.bin dosyasını assets klasörüne ekleyin.";
+    }
+}
+```
+
+```java
+// DOSYA 51: app/src/main/java/com/jai/app/JaiApp.java
+package com.jai.app;
+import android.app.Application;
+import com.jai.app.model.InferenceRuntime;
+public class JaiApp extends Application {
+    private static JaiApp instance;
+    private InferenceRuntime runtime;
+    @Override public void onCreate() {
+        super.onCreate(); instance = this; runtime = new InferenceRuntime(); runtime.init(this);
+    }
+    public static JaiApp get() { return instance; }
+    public InferenceRuntime runtime() { return runtime; }
+}
+```
